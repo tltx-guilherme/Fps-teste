@@ -47,10 +47,10 @@ export async function getGeneralStats(req, res) {
   
   if (useLocal) {
     try {
-      const syncStatus = getSyncStatus();
-      const localData = getLocalStats({ limit: unlimited ? 'all' : limit, daysAgo: periodDays });
+      const syncStatus = await getSyncStatus();
+      const localData = await getLocalStats({ limit: unlimited ? 'all' : limit, daysAgo: periodDays });
       // Captura recorte fixo de 24h para "Acessos por horário" e "Top rotas"
-      const local24h = getLocalStats({ limit: 200000, daysAgo: 1 });
+      const local24h = await getLocalStats({ limit: 200000, daysAgo: 1 });
       
       if (localData && localData.length > 0) {
         // Converte formato local para formato esperado
@@ -268,7 +268,7 @@ export async function searchByRA(req, res) {
   try {
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || null;
     const userId = req.userId || 'anonymous';
-    logSearchRA({ ra, userId, ip });
+    await logSearchRA({ ra, userId, ip });
   } catch (e) {
     console.warn('⚠️  Falha ao registrar auditoria de pesquisa:', e.message);
   }
@@ -385,27 +385,33 @@ export async function getSearchLogs(req, res) {
     const filters = [];
     const params = [];
 
+    const toMs = (value) => {
+      const raw = isNaN(Number(value)) ? new Date(value).getTime() : Number(value);
+      if (isNaN(raw)) return null;
+      return raw < 1e12 ? raw * 1000 : raw;
+    };
+
     if (ra) {
-      filters.push("ra = ?");
       params.push(String(ra));
+      filters.push(`ra = $${params.length}`);
     }
     const userId = userIdParam || userIdAlt;
     if (userId) {
-      filters.push("user_id = ?");
       params.push(String(userId));
+      filters.push(`user_id = $${params.length}`);
     }
     if (start) {
-      const ts = isNaN(Number(start)) ? new Date(start).getTime() : Number(start);
-      if (!isNaN(ts)) {
-        filters.push("searched_at >= ?");
-        params.push(Math.floor(ts / 1000));
+      const ts = toMs(start);
+      if (ts) {
+        params.push(ts);
+        filters.push(`searched_at >= $${params.length}`);
       }
     }
     if (end) {
-      const ts = isNaN(Number(end)) ? new Date(end).getTime() : Number(end);
-      if (!isNaN(ts)) {
-        filters.push("searched_at <= ?");
-        params.push(Math.floor(ts / 1000));
+      const ts = toMs(end);
+      if (ts) {
+        params.push(ts);
+        filters.push(`searched_at <= $${params.length}`);
       }
     }
 
@@ -417,18 +423,17 @@ export async function getSearchLogs(req, res) {
 
     const sql = `
       SELECT id, ra, user_id, ip,
-             datetime(searched_at, 'unixepoch', 'localtime') AS searched_at
+             to_timestamp(searched_at / 1000.0) AS searched_at
       FROM search_logs
       ${where}
       ORDER BY searched_at ${ord}
-      LIMIT ? OFFSET ?
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
-    const rows = queryLocal(sql, [...params, limit, offset]);
+    const rows = await queryLocal(sql, [...params, limit, offset]);
 
-    // Count total for pagination
-    const countSql = `SELECT COUNT(*) as total FROM search_logs ${where}`;
-    const countRow = queryLocal(countSql, params)[0] || { total: 0 };
+    const countSql = `SELECT COUNT(*)::bigint as total FROM search_logs ${where}`;
+    const countRow = (await queryLocal(countSql, params))[0] || { total: 0 };
 
     res.json({
       total: countRow.total,
@@ -459,16 +464,22 @@ export async function exportSearchLogsCSV(req, res) {
     const filters = [];
     const params = [];
 
-    if (ra) { filters.push("ra = ?"); params.push(String(ra)); }
+    const toMs = (value) => {
+      const raw = isNaN(Number(value)) ? new Date(value).getTime() : Number(value);
+      if (isNaN(raw)) return null;
+      return raw < 1e12 ? raw * 1000 : raw;
+    };
+
+    if (ra) { params.push(String(ra)); filters.push(`ra = $${params.length}`); }
     const userId = userIdParam || userIdAlt;
-    if (userId) { filters.push("user_id = ?"); params.push(String(userId)); }
+    if (userId) { params.push(String(userId)); filters.push(`user_id = $${params.length}`); }
     if (start) {
-      const ts = isNaN(Number(start)) ? new Date(start).getTime() : Number(start);
-      if (!isNaN(ts)) { filters.push("searched_at >= ?"); params.push(Math.floor(ts / 1000)); }
+      const ts = toMs(start);
+      if (ts) { params.push(ts); filters.push(`searched_at >= $${params.length}`); }
     }
     if (end) {
-      const ts = isNaN(Number(end)) ? new Date(end).getTime() : Number(end);
-      if (!isNaN(ts)) { filters.push("searched_at <= ?"); params.push(Math.floor(ts / 1000)); }
+      const ts = toMs(end);
+      if (ts) { params.push(ts); filters.push(`searched_at <= $${params.length}`); }
     }
 
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
@@ -476,13 +487,13 @@ export async function exportSearchLogsCSV(req, res) {
 
     const sql = `
       SELECT ra, user_id, ip,
-             datetime(searched_at, 'unixepoch', 'localtime') AS searched_at
+             to_timestamp(searched_at / 1000.0) AS searched_at
       FROM search_logs
       ${where}
       ORDER BY searched_at ${ord}
     `;
 
-    const rows = queryLocal(sql, params);
+    const rows = await queryLocal(sql, params);
 
     // Monta CSV
     const header = ['ra','user_id','ip','searched_at'];

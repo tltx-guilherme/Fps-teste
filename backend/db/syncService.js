@@ -1,132 +1,121 @@
-import Database from 'better-sqlite3';
 import axios from 'axios';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import fs from 'fs';
+import { Pool } from 'pg';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const { DATABASE_URL, APPD_ANALYTICS_URL, APPD_ACCOUNT_NAME, APPD_API_KEY, APPD_APPLICATION } = process.env;
 
-const DB_PATH = join(__dirname, 'analytics.db');
+const useSsl = (process.env.PGSSL || '').toLowerCase() === 'true' || (DATABASE_URL || '').includes('supabase.co');
+
+const pool = new Pool({
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
+  host: 'db.ubtwernbbbaismnwbrwr.supabase.co',
+  port: 5432,
+  database: 'postgres',
+  user: 'postgres',
+  password: process.env.DATABASE_URL?.match(/password:([^@]+)/)?.[1] || 'UGmEPrdjCAU4exZm'
+});
 
 // Credenciais AppDynamics
 const APPDYNAMICS_CONFIG = {
-  url: 'https://gru-ana-api.saas.appdynamics.com/events/query',
-  accountName: 'fpsfaculdadepernambucanadesaude-prod_0d1c5bc4-c49d-46f0-b64a-59368a4fba07',
-  apiKey: '109beedf-e770-43f4-9611-02e5c6ebece0',
-  application: 'Aluno Online'
+  url: APPD_ANALYTICS_URL,
+  accountName: APPD_ACCOUNT_NAME,
+  apiKey: APPD_API_KEY,
+  application: APPD_APPLICATION || 'Aluno Online',
 };
 
 // Inicializa o banco de dados
-export function initDatabase() {
-  const db = new Database(DB_PATH);
-  
-  // Cria tabela de transações
-  db.exec(`
+export async function initDatabase() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       url TEXT,
       url_resumida TEXT,
-      horario INTEGER,
+      horario BIGINT,
       saude TEXT,
       error_code TEXT,
       ra TEXT,
-      synced_at INTEGER,
-      created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      synced_at BIGINT,
+      created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint
     );
   `);
-  
-  // Tabela para auditoria de pesquisas por RA
-  db.exec(`
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS search_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id BIGSERIAL PRIMARY KEY,
       ra TEXT NOT NULL,
       user_id TEXT NOT NULL,
       ip TEXT,
-      searched_at INTEGER DEFAULT (strftime('%s','now'))
+      searched_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint
     );
-    CREATE INDEX IF NOT EXISTS idx_search_ra ON search_logs(ra);
-    CREATE INDEX IF NOT EXISTS idx_search_user ON search_logs(user_id);
-    CREATE INDEX IF NOT EXISTS idx_search_time ON search_logs(searched_at);
   `);
-  
-  // Índices para otimizar queries
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_ra ON transactions(ra);
-    CREATE INDEX IF NOT EXISTS idx_horario ON transactions(horario);
-    CREATE INDEX IF NOT EXISTS idx_saude ON transactions(saude);
-    CREATE INDEX IF NOT EXISTS idx_synced_at ON transactions(synced_at);
-    -- Evita duplicados do mesmo URL/horario
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_event ON transactions(url, horario);
-  `);
-  
-  // Tabela de metadados de sincronização
-  db.exec(`
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_search_ra ON search_logs(ra);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_search_user ON search_logs(user_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_search_time ON search_logs(searched_at);`);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_ra ON transactions(ra);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_horario ON transactions(horario);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_saude ON transactions(saude);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_synced_at ON transactions(synced_at);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_event ON transactions(url, horario);`);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS sync_metadata (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      last_sync INTEGER,
-      total_records INTEGER,
+      id BIGSERIAL PRIMARY KEY,
+      last_sync BIGINT,
+      total_records BIGINT,
       sync_status TEXT,
-      error_message TEXT
+      error_message TEXT,
+      created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint
     );
   `);
-  
-  console.log('✅ Banco de dados SQLite inicializado:', DB_PATH);
-  db.close();
-  return DB_PATH;
+
+  console.log('✅ Banco de dados PostgreSQL inicializado');
 }
 
 // Registra auditoria de pesquisa por RA
-export function logSearchRA({ ra, userId, ip }) {
-  const db = new Database(DB_PATH);
-  try {
-    const stmt = db.prepare(`
-      INSERT INTO search_logs (ra, user_id, ip, searched_at)
-      VALUES (?, ?, ?, strftime('%s','now'))
-    `);
-    stmt.run(ra || null, userId || 'unknown', ip || null);
-  } finally {
-    db.close();
-  }
+export async function logSearchRA({ ra, userId, ip }) {
+  await pool.query(
+    'INSERT INTO search_logs (ra, user_id, ip, searched_at) VALUES ($1, $2, $3, $4)',
+    [ra || null, userId || 'unknown', ip || null, Date.now()]
+  );
 }
 
 // Busca dados do AppDynamics
 async function fetchFromAppDynamics(limit = 50000, sinceTimestamp = null) {
   const now = Date.now();
-  // Se não há timestamp (primeira sincronização baseline), NÃO buscamos histórico
+  // Se nao ha timestamp (primeira sincronizacao baseline), NAO buscamos historico
   if (!sinceTimestamp) {
-    console.log('🛑 Primeira sync é baseline. Não puxando histórico antigo.');
+    console.log('🛑 Primeira sync e baseline. Nao puxando historico antigo.');
     return { total: 0, results: [] };
   }
   // Pequeno overlap de 5 segundos para evitar perda de eventos limítrofes
   const startTimestamp = sinceTimestamp - 5000;
   console.log('📡 Preparando chamada AppDynamics para eventos novos...');
-  console.log(`   Início (com overlap): ${new Date(startTimestamp).toISOString()} | Agora: ${new Date(now).toISOString()}`);
-  
+  console.log(`   Inicio (com overlap): ${new Date(startTimestamp).toISOString()} | Agora: ${new Date(now).toISOString()}`);
+
   const query = {
-    query: `SELECT segments.httpData.url, transactionName AS 'URL Resumida', eventTimestamp AS 'Horário da chamada', userExperience AS 'Saúde da chamada', segments.errorList.errorCode AS 'Tipo de Erro' FROM transactions WHERE application = '${APPDYNAMICS_CONFIG.application}' AND eventTimestamp > ${startTimestamp} ORDER BY eventTimestamp DESC LIMIT ${limit}`
+    query: `SELECT segments.httpData.url, transactionName AS 'URL Resumida', eventTimestamp AS 'Horario da chamada', userExperience AS 'Saude da chamada', segments.errorList.errorCode AS 'Tipo de Erro' FROM transactions WHERE application = '${APPDYNAMICS_CONFIG.application}' AND eventTimestamp > ${startTimestamp} ORDER BY eventTimestamp DESC LIMIT ${limit}`
   };
-  
+
   console.log(`   Query: ${query.query}`);
 
   try {
-    console.log('   Enviando requisição...');
+    console.log('   Enviando requisicao...');
     const response = await axios.post(APPDYNAMICS_CONFIG.url, query, {
       headers: {
         'X-Events-API-AccountName': APPDYNAMICS_CONFIG.accountName,
         'X-Events-API-Key': APPDYNAMICS_CONFIG.apiKey,
         'Content-type': 'application/vnd.appd.events+json;v=2'
       },
-      timeout: 60000 // 60 segundos
+      timeout: 60000
     });
 
     console.log(`✅ Resposta recebida! Status: ${response.status}`);
-    
-    // AppDynamics retorna um array com objeto contendo results
+
     const data = Array.isArray(response.data) ? response.data[0] : response.data;
     console.log(`   Total disponível: ${data?.total || 0}`);
     console.log(`   Resultados recebidos: ${data?.results?.length || 0}`);
-    
+
     return data;
   } catch (error) {
     console.error('❌ Erro ao buscar dados do AppDynamics:', error.message);
@@ -141,101 +130,68 @@ async function fetchFromAppDynamics(limit = 50000, sinceTimestamp = null) {
 // Extrai RA da URL
 function extractRA(url, urlResumida) {
   const combined = (url || urlResumida || '').toLowerCase();
-  
-  // Padrões comuns de RA
+
   const patterns = [
     /ra[=/](\d+)/i,
     /aluno[=/](\d+)/i,
     /user[=/](\d+)/i,
     /id[=/](\d+)/i
   ];
-  
+
   for (const pattern of patterns) {
     const match = combined.match(pattern);
     if (match) return match[1];
   }
-  
+
   return null;
 }
 
 // Sincroniza dados com o banco local
 export async function syncDatabase(options = {}) {
   const { limit = 50000, force = false } = options;
-  const db = new Database(DB_PATH);
-  
+
   try {
-    // Verifica última sincronização
-    const lastSync = db.prepare('SELECT last_sync FROM sync_metadata ORDER BY id DESC LIMIT 1').get();
+    const lastSyncResult = await pool.query('SELECT last_sync FROM sync_metadata ORDER BY id DESC LIMIT 1');
+    const lastSync = lastSyncResult.rows[0]?.last_sync || null;
     const now = Date.now();
-    
-    // Se sincronizou há menos de 5 minutos e não é forçado, pula
-    if (!force && lastSync && (now - lastSync.last_sync) < 5 * 60 * 1000) {
-      console.log('⏭️  Sincronização recente, pulando...');
-      db.close();
+
+    if (!force && lastSync && (now - lastSync) < 5 * 60 * 1000) {
+      console.log('⏭️  Sincronizacao recente, pulando...');
       return { skipped: true, message: 'Sincronizado recentemente' };
     }
-    
-    console.log('🔄 Iniciando sincronização incremental...');
-    console.log(`   Parâmetros: limit=${limit}`);
-    console.log(`   Última sync: ${lastSync ? new Date(lastSync.last_sync).toISOString() : 'Nenhuma (baseline)'}`);
-    
-    // Se não há lastSync, criamos baseline e não populamos histórico
+
+    console.log('🔄 Iniciando sincronizacao incremental...');
+    console.log(`   Parametros: limit=${limit}`);
+    console.log(`   Ultima sync: ${lastSync ? new Date(lastSync).toISOString() : 'Nenhuma (baseline)'}`);
+
     if (!lastSync) {
-      db.prepare(`INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES (?, ?, ?, ?)`)
-        .run(now, 0, 'baseline', null);
-      console.log('✅ Baseline criada. Dados antigos ignorados. Aguarde próxima execução para começar a coletar.');
-      db.close();
+      await pool.query(
+        'INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES ($1, $2, $3, $4)',
+        [now, 0, 'baseline', null]
+      );
+      console.log('✅ Baseline criada. Dados antigos ignorados. Aguarde proxima execucao para comecar a coletar.');
       return { success: true, baseline: true, newRecords: 0, totalRecords: 0 };
     }
-    
-    // Busca eventos APÓS última sincronização
-    const data = await fetchFromAppDynamics(limit, lastSync.last_sync);
-    
+
+    const data = await fetchFromAppDynamics(limit, lastSync);
     const rows = data?.results || [];
-    
+
     console.log(`📥 Recebidos ${rows.length} registros do AppDynamics`);
-    
+
     if (rows.length === 0) {
-      console.log('⚠️  Nenhum evento novo desde a última execução');
-      const totalRecords = db.prepare('SELECT COUNT(*) as count FROM transactions').get().count;
-      db.prepare(`INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES (?, ?, ?, ?)`)
-        .run(now, totalRecords, 'success', 'Sem novos eventos');
-      db.close();
+      console.log('⚠️  Nenhum evento novo desde a ultima execucao');
+      const totalRecordsResult = await pool.query('SELECT COUNT(*)::bigint as count FROM transactions');
+      const totalRecords = Number(totalRecordsResult.rows[0]?.count || 0);
+      await pool.query(
+        'INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES ($1, $2, $3, $4)',
+        [now, totalRecords, 'success', 'Sem novos eventos']
+      );
       return { success: true, newRecords: 0, totalRecords, message: 'Sem novos eventos' };
     }
-    
-    // Limpa dados antigos - mantém histórico de 1 ano (365 dias)
-    const oneYearAgo = now - (365 * 24 * 60 * 60 * 1000);
-    const deleted = db.prepare('DELETE FROM transactions WHERE horario < ?').run(oneYearAgo);
-    if (deleted.changes > 0) {
-      console.log(`🗑️  Removidos ${deleted.changes} registros com mais de 1 ano`);
-    }
-    
-    // Insere novos dados (ignora duplicados)
-    const insert = db.prepare(`
-      INSERT OR IGNORE INTO transactions (url, url_resumida, horario, saude, error_code, ra, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const insertMany = db.transaction((transactions) => {
-      for (const t of transactions) {
-        insert.run(
-          t.url,
-          t.url_resumida,
-          t.horario,
-          t.saude,
-          t.error_code,
-          t.ra,
-          now
-        );
-      }
-    });
-    
-    // Processa e insere dados
+
     const processedData = rows.map(r => {
       const fullUrls = r[0] || [];
       const primaryUrl = fullUrls[0] || null;
-      // r[2] vem como string ISO ou timestamp - normalizar para timestamp em ms
       let horarioTimestamp = r[2];
       if (typeof horarioTimestamp === 'string') {
         horarioTimestamp = new Date(horarioTimestamp).getTime();
@@ -249,122 +205,138 @@ export async function syncDatabase(options = {}) {
         ra: extractRA(primaryUrl, r[1])
       };
     });
-    
+
     console.log(`🔧 Processando ${processedData.length} registros...`);
-    console.log(`   Exemplo: ${JSON.stringify(processedData[0])}`);
-    
-    insertMany(processedData);
-    
-    // Atualiza metadados
-    const totalRecords = db.prepare('SELECT COUNT(*) as count FROM transactions').get().count;
-    db.prepare(`
-      INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message)
-      VALUES (?, ?, ?, ?)
-    `).run(now, totalRecords, 'success', null);
-    
-    console.log(`✅ Sincronização concluída! ${rows.length} novos registros, total: ${totalRecords}`);
-    
-    db.close();
-    return {
-      success: true,
-      newRecords: rows.length,
-      totalRecords,
-      timestamp: now
-    };
-    
+    if (processedData[0]) {
+      console.log(`   Exemplo: ${JSON.stringify(processedData[0])}`);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const oneYearAgo = now - (365 * 24 * 60 * 60 * 1000);
+      const deleted = await client.query('DELETE FROM transactions WHERE horario < $1', [oneYearAgo]);
+      if ((deleted.rowCount || 0) > 0) {
+        console.log(`🗑️  Removidos ${deleted.rowCount} registros com mais de 1 ano`);
+      }
+
+      const chunkSize = 1000;
+      for (let i = 0; i < processedData.length; i += chunkSize) {
+        const chunk = processedData.slice(i, i + chunkSize);
+        const values = [];
+        const placeholders = chunk.map((t, idx) => {
+          const base = idx * 7;
+          values.push(
+            t.url,
+            t.url_resumida,
+            t.horario,
+            t.saude,
+            t.error_code,
+            t.ra,
+            now
+          );
+          return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+        });
+
+        const insertSql = `
+          INSERT INTO transactions (url, url_resumida, horario, saude, error_code, ra, synced_at)
+          VALUES ${placeholders.join(',')}
+          ON CONFLICT (url, horario) DO NOTHING
+        `;
+
+        await client.query(insertSql, values);
+      }
+
+      const totalRecordsResult = await client.query('SELECT COUNT(*)::bigint as count FROM transactions');
+      const totalRecords = Number(totalRecordsResult.rows[0]?.count || 0);
+
+      await client.query(
+        'INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES ($1, $2, $3, $4)',
+        [now, totalRecords, 'success', null]
+      );
+
+      await client.query('COMMIT');
+
+      console.log(`✅ Sincronizacao concluida! ${rows.length} novos registros, total: ${totalRecords}`);
+
+      return {
+        success: true,
+        newRecords: rows.length,
+        totalRecords,
+        timestamp: now
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
-    console.error('❌ Erro na sincronização:', error);
-    
-    // Registra erro
-    db.prepare(`
-      INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message)
-      VALUES (?, ?, ?, ?)
-    `).run(Date.now(), 0, 'error', error.message);
-    
-    db.close();
+    console.error('❌ Erro na sincronizacao:', error);
+    await pool.query(
+      'INSERT INTO sync_metadata (last_sync, total_records, sync_status, error_message) VALUES ($1, $2, $3, $4)',
+      [Date.now(), 0, 'error', error.message]
+    );
     throw error;
   }
 }
 
 // Query helper para buscar dados locais
-export function queryLocal(sqlQuery, params = []) {
-  const db = new Database(DB_PATH);
-  try {
-    const results = db.prepare(sqlQuery).all(...params);
-    db.close();
-    return results;
-  } catch (error) {
-    db.close();
-    throw error;
-  }
+export async function queryLocal(sqlQuery, params = []) {
+  const result = await pool.query(sqlQuery, params);
+  return result.rows;
 }
 
-// Busca estatísticas do banco local
-export function getLocalStats(options = {}) {
+// Busca estatisticas do banco local
+export async function getLocalStats(options = {}) {
   const { limit = 100000, daysAgo = 7, ra = null } = options;
-  const db = new Database(DB_PATH);
-  
-  try {
-    const now = Date.now();
-    const startTimestamp = now - (daysAgo * 24 * 60 * 60 * 1000);
-    
-    let whereClause = 'WHERE horario >= ?';
-    let params = [startTimestamp];
-    
-    if (ra) {
-      whereClause += ' AND ra = ?';
-      params.push(ra);
-    }
-    
-    let query = `
-      SELECT url, url_resumida, horario, saude, error_code
-      FROM transactions
-      ${whereClause}
-    `;
-    // Se limit for null ou 'all', não aplica LIMIT
-    if (limit !== null && limit !== 'all') {
-      query += ` LIMIT ?`;
-      params.push(limit);
-    }
-    
-    const results = db.prepare(query).all(...params);
-    db.close();
-    
-    return results;
-  } catch (error) {
-    db.close();
-    throw error;
+  const now = Date.now();
+  const startTimestamp = now - (daysAgo * 24 * 60 * 60 * 1000);
+
+  const filters = ['horario >= $1'];
+  const params = [startTimestamp];
+
+  if (ra) {
+    params.push(ra);
+    filters.push(`ra = $${params.length}`);
   }
+
+  const whereClause = `WHERE ${filters.join(' AND ')}`;
+
+  let query = `
+    SELECT url, url_resumida, horario, saude, error_code
+    FROM transactions
+    ${whereClause}
+  `;
+
+  if (limit !== null && limit !== 'all') {
+    params.push(limit);
+    query += ` LIMIT $${params.length}`;
+  }
+
+  const results = await pool.query(query, params);
+  return results.rows;
 }
 
-// Busca último status de sincronização
-export function getSyncStatus() {
-  const db = new Database(DB_PATH);
-  try {
-    const status = db.prepare(`
-      SELECT * FROM sync_metadata ORDER BY id DESC LIMIT 1
-    `).get();
-    
-    const totalRecords = db.prepare('SELECT COUNT(*) as count FROM transactions').get().count;
-    
-    db.close();
-    return { ...status, currentRecords: totalRecords };
-  } catch (error) {
-    db.close();
-    throw error;
-  }
+// Busca ultimo status de sincronizacao
+export async function getSyncStatus() {
+  const statusResult = await pool.query('SELECT * FROM sync_metadata ORDER BY id DESC LIMIT 1');
+  const status = statusResult.rows[0] || null;
+  const totalRecordsResult = await pool.query('SELECT COUNT(*)::bigint as count FROM transactions');
+  const totalRecords = Number(totalRecordsResult.rows[0]?.count || 0);
+  return { ...status, currentRecords: totalRecords };
 }
 
-// Scheduler automático (roda a cada X minutos)
+// Scheduler automatico (roda a cada X minutos)
 export function startAutoSync(intervalMinutes = 2) {
   console.log(`🤖 Auto-sync ativado (intervalo: ${intervalMinutes} minutos)`);
-  console.log('📌 Modo: coleta apenas eventos futuros (sem histórico)');
-  
-  // Baseline rápida
+  console.log('📌 Modo: coleta apenas eventos futuros (sem historico)');
+
   setTimeout(() => {
     syncDatabase({ limit: 50000 }).catch(console.error);
   }, 3000);
-  
+
   setInterval(() => {
     console.log('⏰ Verificando novos eventos...');
     syncDatabase({ limit: 50000 }).catch(console.error);

@@ -15,7 +15,8 @@ import { initDatabase, startAutoSync } from "./db/syncService.js";
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '500mb' }));
+app.use(express.urlencoded({ limit: '500mb', extended: true }));
 app.use(morgan("dev"));
 
 // Middleware simples para extrair usuário do JWT (se presente)
@@ -36,8 +37,10 @@ app.use((req, res, next) => {
 
 import analyticsRoutes from "./routes/analytics.js";
 import syncRoutes from "./routes/sync.js";
+import importRoutes from "./routes/import.js";
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api", syncRoutes);
+app.use("/api", importRoutes);
 
 const {
   PORT,
@@ -45,6 +48,7 @@ const {
   APPD_API_KEY,
   APPD_ACCOUNT_NAME,
   APPD_ANALYTICS_URL,
+  DATABASE_URL,
   LOGIN_EMAIL,
   LOGIN_PASSWORD,
   LOGIN_USER_ID,
@@ -62,6 +66,7 @@ if (!JWT_SECRET) throw new Error("❌ JWT_SECRET não definido no .env");
 if (!APPD_API_KEY) throw new Error("❌ APPD_API_KEY não definida no .env");
 if (!APPD_ACCOUNT_NAME) throw new Error("❌ APPD_ACCOUNT_NAME não definida no .env");
 if (!APPD_ANALYTICS_URL) throw new Error("❌ APPD_ANALYTICS_URL não definida no .env");
+if (!DATABASE_URL) throw new Error("❌ DATABASE_URL não definida no .env");
 if (!LOGIN_EMAIL) throw new Error("❌ LOGIN_EMAIL não definido no .env");
 if (!LOGIN_PASSWORD) throw new Error("❌ LOGIN_PASSWORD não definida no .env");
 if (!LOGIN_USER_ID) throw new Error("❌ LOGIN_USER_ID não definido no .env");
@@ -103,19 +108,60 @@ app.post("/api/auth/login", (req, res) => {
   res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
 });
 
+// Endpoint para inicializar banco manualmente
+app.post("/api/init-db", async (req, res) => {
+  try {
+    console.log('🗄️  Inicializando banco de dados...');
+    await initDatabase();
+    console.log('✅ Banco inicializado com sucesso');
+    res.json({ success: true, message: 'Banco inicializado' });
+  } catch (error) {
+    console.error('❌ Erro ao inicializar banco:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erro ao inicializar banco',
+      message: error.message 
+    });
+  }
+});
+
+// Endpoint para iniciar sincronização automática
+app.post("/api/start-sync", async (req, res) => {
+  try {
+    console.log('🔄 Iniciando sincronização automática...');
+    startAutoSync(parseInt(SYNC_INTERVAL_MINUTES) || 2);
+    console.log('✅ Sincronização iniciada com sucesso');
+    res.json({ success: true, message: 'Sincronização automática ativada' });
+  } catch (error) {
+    console.error('❌ Erro ao iniciar sync:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erro ao iniciar sincronização',
+      message: error.message 
+    });
+  }
+});
+
 // ========================
 // START SERVER
 // ========================
 
-// Inicializa banco de dados SQLite
-console.log('🗄️  Inicializando banco de dados...');
-initDatabase();
+const startServer = async () => {
+  console.log('� Iniciando servidor (banco será inicializado quando necessário)...');
 
-// Inicia sincronização automática a cada 2 minutos
-startAutoSync(parseInt(SYNC_INTERVAL_MINUTES) || 2);
+  // NOTE: initDatabase() e startAutoSync() pulados no startup devido a problemas de conectividade IPv6
+  // O banco será inicializado na primeira chamada que precisar dele
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 API FPS rodando em http://0.0.0.0:${PORT}`);
-  console.log(`📡 Acessível externamente em http://${EXTERNAL_IP}:${PORT}`);
-  console.log(`🔄 Sincronização automática ativada (intervalo: ${SYNC_INTERVAL_MINUTES} minutos)`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 API FPS rodando em http://0.0.0.0:${PORT}`);
+    console.log(`📡 Acessível externamente em http://${EXTERNAL_IP}:${PORT}`);
+    console.log(`⚠️  IMPORTANTE: Banco e sync precisam ser inicializados manualmente:`);
+    console.log(`   - POST /api/init-db para criar estrutura do banco`);
+    console.log(`   - POST /api/start-sync para iniciar sincronização`);
+  });
+};
+
+startServer().catch((error) => {
+  console.error('❌ Falha ao iniciar a API:', error);
+  process.exit(1);
 });

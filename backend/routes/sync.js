@@ -18,26 +18,26 @@ router.post('/sync', async (req, res) => {
 });
 
 // Verifica status da sincronização
-router.get('/sync/status', (req, res) => {
+router.get('/sync/status', async (req, res) => {
   try {
-    const status = getSyncStatus();
+    const status = await getSyncStatus();
     res.json(status);
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro ao buscar status',
-      message: error.message 
+      message: error.message
     });
   }
 });
 
 // Busca estatísticas do banco local (muito mais rápido)
-router.get('/stats/local', (req, res) => {
+router.get('/stats/local', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 10000, 50000);
     const daysAgo = parseInt(req.query.days) || 7;
     const ra = req.query.ra || null;
     
-    const data = getLocalStats({ limit, daysAgo, ra });
+    const data = await getLocalStats({ limit, daysAgo, ra });
     
     res.json({
       source: 'local_database',
@@ -45,9 +45,9 @@ router.get('/stats/local', (req, res) => {
       data
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro ao buscar dados locais',
-      message: error.message 
+      message: error.message
     });
   }
 });
