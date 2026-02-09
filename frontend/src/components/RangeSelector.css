@@ -1,0 +1,112 @@
+.range-selector {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  max-width: 180px;
+}
+
+.range-selector-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  border: 2px solid #179a46;
+  border-radius: 12px;
+  background-color: white;
+  color: #179a46;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(23, 154, 70, 0.08);
+}
+
+.range-selector-trigger:hover {
+  border-color: #127a37;
+  box-shadow: 0 4px 12px rgba(23, 154, 70, 0.15);
+}
+
+.range-selector-trigger:focus {
+  outline: none;
+  border-color: #127a37;
+  box-shadow: 0 0 0 3px rgba(23, 154, 70, 0.1), 0 4px 12px rgba(23, 154, 70, 0.15);
+}
+
+.range-selector-icon {
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  transition: transform 0.3s ease;
+}
+
+.range-selector-icon.open {
+  transform: rotate(180deg);
+}
+
+.range-selector-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background-color: white;
+  border: 2px solid #179a46;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(23, 154, 70, 0.2);
+  z-index: 1000;
+  overflow: hidden;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.range-selector-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background-color: white;
+  color: #333;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.range-selector-option:hover {
+  background-color: #f0f9f6;
+  color: #179a46;
+}
+
+.range-selector-option.active {
+  background-color: #179a46;
+  color: white;
+  font-weight: 600;
+}
+
+.range-selector-option.active:hover {
+  background-color: #127a37;
+}
+
+.range-selector-option:not(:last-child) {
+  border-bottom: 1px solid #e8f5f0;
+}
+
+.check-icon {
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  flex-shrink: 0;
+}

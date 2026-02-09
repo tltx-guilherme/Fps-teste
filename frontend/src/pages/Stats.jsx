@@ -1,0 +1,1136 @@
+import { useState, useEffect, useRef, useMemo } from "react";
+import { apiGet } from "../utils/api";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+import './Stats.css';
+
+// Registrar componentes do Chart.js
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+// Componente Dropdown Customizado
+function CustomDropdown({ options, value, onChange, placeholder }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find(opt => opt.value === value);
+
+  return (
+    <div className="custom-dropdown" ref={dropdownRef}>
+      <button
+        type="button"
+        className="custom-dropdown-trigger"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className="custom-dropdown-label">
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <svg
+          className={`custom-dropdown-arrow ${isOpen ? 'open' : ''}`}
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      
+      {isOpen && (
+        <div className="custom-dropdown-menu">
+          {options.map((option, idx) => (
+            <div
+              key={idx}
+              className={`custom-dropdown-item ${option.value === value ? 'selected' : ''}`}
+              onClick={() => {
+                onChange(option.value);
+                setIsOpen(false);
+              }}
+            >
+              <span>{option.label}</span>
+              {option.value === value && (
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Stats() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [limit, setLimit] = useState(100000);
+  const [period, setPeriod] = useState(7); // dias
+  const [viewMode, setViewMode] = useState('period'); // '24h' | 'period'
+  const [showRecursosModal, setShowRecursosModal] = useState(false);
+  const [selectedRecurso, setSelectedRecurso] = useState(null);
+  const [showErrosModal, setShowErrosModal] = useState(false);
+  const [showSlowModal, setShowSlowModal] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [countdown, setCountdown] = useState(30);
+  const [showRoutes, setShowRoutes] = useState(false);
+  
+  // Ref para o banner do período
+  const periodBannerRef = useRef(null);
+
+  async function loadStats() {
+    try {
+      setLoading(true);
+      setError("");
+      const effectiveLimit = viewMode === 'period' ? 'all' : limit;
+      console.log('Carregando stats - limite:', effectiveLimit, 'período:', period, 'dias', 'modo:', viewMode); // Debug
+      const data = await apiGet(`analytics/stats?limit=${effectiveLimit}&days=${period}`);
+      console.log('Stats recebidas:', data); // Debug
+      setStats(data);
+      setCountdown(30); // Reset countdown
+    } catch (e) {
+      console.error('Erro ao carregar stats:', e); // Debug
+      setError(e.message || "Erro ao carregar estatísticas");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Auto-refresh a cada 30 segundos
+  useEffect(() => {
+    let intervalId;
+    let countdownId;
+    
+    if (autoRefresh && !loading) {
+      countdownId = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            return 30;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
+      intervalId = setInterval(() => {
+        loadStats();
+      }, 30000); // 30 segundos
+    }
+    
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (countdownId) clearInterval(countdownId);
+    };
+  }, [autoRefresh, loading, limit, period, viewMode]); // eslint-disable-line
+
+  useEffect(() => {
+    console.log('useEffect disparado - limit:', limit, 'period:', period); // Debug
+    loadStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit, period, viewMode]);
+  
+  // Scroll para o banner quando o período mudar
+  useEffect(() => {
+    if (periodBannerRef.current && !loading) {
+      periodBannerRef.current.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'start'
+      });
+    }
+  }, [period, loading]);
+
+  // Ajusta modo padrão para 24h quando disponível
+  useEffect(() => {
+    if (stats?.horarios24h && viewMode !== '24h') {
+      // mantém escolha do usuário se ele já trocou
+      // não força troca automática
+    }
+  }, [stats, viewMode]);
+
+  // Configuração do gráfico de horários - com useMemo para forçar atualização
+  const horariosData = useMemo(() => {
+    const prefers24h = viewMode === '24h';
+    const base = prefers24h
+      ? (stats?.horarios24h && stats.horarios24h.length === 24 ? stats.horarios24h : stats?.horariosMaisUsados)
+      : stats?.horariosMaisUsados;
+    if (!base) return null;
+    return {
+      labels: base.map(h => `${h.hora}h`),
+      datasets: [
+        {
+          label: 'Acessos',
+          data: base.map(h => h.acessos),
+          backgroundColor: '#115b2a',
+          borderRadius: 4,
+        },
+        {
+          label: 'Erros',
+          data: base.map(h => h.erros || 0),
+          backgroundColor: '#dc2626',
+          borderRadius: 4,
+        },
+      ],
+    };
+  }, [stats, limit, period]);
+
+  // Top 3 horários de pico
+  const topHorarios = useMemo(() => {
+    const prefers24h = viewMode === '24h';
+    const base = prefers24h
+      ? (stats?.horarios24h && stats.horarios24h.length === 24 ? stats.horarios24h : stats?.horariosMaisUsados)
+      : stats?.horariosMaisUsados;
+    if (!base) return [];
+    return [...base]
+      .sort((a, b) => b.acessos - a.acessos)
+      .slice(0, 3);
+  }, [stats, viewMode]);
+
+  const routesTopData = useMemo(() => {
+    if (!stats) return [];
+    if (viewMode === '24h' && stats.rotasMaisAcessadas24h && stats.rotasMaisAcessadas24h.length > 0) {
+      return stats.rotasMaisAcessadas24h.map(r => ({ name: r.url, quantidade: r.quantidade }));
+    }
+    if (stats.recursosMaisUsados && stats.recursosMaisUsados.length > 0) {
+      return stats.recursosMaisUsados.map(r => ({ name: r.categoria, quantidade: r.quantidade }));
+    }
+    return [];
+  }, [stats, viewMode]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-[#115b2a] mb-4"></div>
+          <p className="text-gray-600">Carregando estatísticas...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+        {error}
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return null;
+  }
+
+  // Verificação de dados essenciais
+  if (!stats.horariosMaisUsados || !stats.recursosMaisUsados) {
+    return (
+      <div className="p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <p className="text-yellow-800">Dados incompletos. Tente novamente.</p>
+      </div>
+    );
+  }
+
+  const horariosOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top',
+        labels: {
+          color: '#374151',
+          font: {
+            size: 12,
+            weight: '600'
+          },
+          padding: 15,
+          usePointStyle: true,
+          pointStyle: 'rect'
+        }
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        padding: 12,
+        displayColors: true,
+        callbacks: {
+          title: function(context) {
+            return `Horário: ${context[0].label}`;
+          },
+          label: function(context) {
+            const label = context.dataset.label || '';
+            const value = context.parsed.y;
+            if (label === 'Erros' && value > 0) {
+              const total = context.chart.data.datasets[0].data[context.dataIndex];
+              const percentage = ((value / total) * 100).toFixed(1);
+              return `${label}: ${value} (${percentage}%)`;
+            }
+            return `${label}: ${value}`;
+          },
+          afterLabel: function(context) {
+            if (context.datasetIndex === 0) {
+              const erros = context.chart.data.datasets[1].data[context.dataIndex];
+              if (erros > 0) {
+                return `⚠️ ${erros} falhas neste horário`;
+              }
+            }
+            return '';
+          }
+        }
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        ticks: {
+          color: '#6b7280',
+        },
+        grid: {
+          color: '#f3f4f6',
+        },
+      },
+      x: {
+        ticks: {
+          color: '#6b7280',
+        },
+        grid: {
+          display: false,
+        },
+      },
+    },
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header com controles */}
+      <div className="bg-white border-2 border-gray-200 rounded-lg p-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">Estatísticas do Sistema</h2>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {/* Botão Auto-Refresh */}
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all font-medium text-sm ${
+                autoRefresh
+                  ? 'bg-[#115b2a] text-white border-[#115b2a] hover:bg-[#0d4621]'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              {autoRefresh ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Atualiza em {countdown}s</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Pausado</span>
+                </>
+              )}
+            </button>
+
+            {/* Botão Atualizar Manual */}
+            <button
+              onClick={loadStats}
+              disabled={loading}
+              className="p-2 rounded-lg border-2 border-gray-300 hover:border-[#115b2a] hover:bg-gray-50 transition-all disabled:opacity-50"
+              title="Atualizar agora"
+            >
+              <svg className={`w-5 h-5 text-gray-700 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Filtros em linha separada - com dropdowns customizados */}
+        <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-200 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">Período:</label>
+            <CustomDropdown
+              options={[
+                { value: 1, label: 'Hoje' },
+                { value: 3, label: '3 dias' },
+                { value: 7, label: '1 semana' },
+                { value: 15, label: '15 dias' },
+                { value: 30, label: '1 mês' },
+                { value: 90, label: '3 meses' },
+              ]}
+              value={period}
+              onChange={(val) => setPeriod(val)}
+              placeholder="Selecione o período"
+            />
+          </div>
+          {viewMode === '24h' && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Limite (24h):</label>
+              <CustomDropdown
+                options={[
+                  { value: 1000, label: '1.000' },
+                  { value: 5000, label: '5.000' },
+                  { value: 10000, label: '10.000' },
+                  { value: 50000, label: '50.000' },
+                  { value: 100000, label: '100.000' },
+                  { value: 200000, label: '200.000' },
+                ]}
+                value={limit}
+                onChange={(val) => setLimit(val)}
+                placeholder="Limite"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Banner do Período Selecionado */}
+      <div 
+        ref={periodBannerRef}
+        className="bg-gradient-to-r from-[#115b2a] to-[#1a7d3c] rounded-xl shadow-lg p-6 mb-8 border-l-4 border-white"
+      >
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-4">
+            <div className="bg-white/20 backdrop-blur-sm rounded-full p-3">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <div className="text-white">
+              <p className="text-sm font-medium opacity-90">Mostrando dados de:</p>
+              <p className="text-2xl font-bold">
+                {viewMode === '24h' ? 'Últimas 24 horas' : 
+                  period === 1 ? 'Hoje' :
+                  period === 3 ? 'Últimos 3 dias' :
+                  period === 7 ? 'Última semana' :
+                  period === 15 ? 'Últimos 15 dias' :
+                  period === 30 ? 'Último mês' :
+                  period === 90 ? 'Últimos 3 meses' :
+                  `Últimos ${period} dias`}
+              </p>
+            </div>
+          </div>
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg px-6 py-3 text-white">
+            <p className="text-sm font-medium opacity-90">Total de Eventos</p>
+            <p className="text-3xl font-bold">{stats.totalEventos.toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Cards de resumo - bem separados */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Total de Acessos */}
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Total de Acessos</h3>
+            <svg className="w-6 h-6 text-[#115b2a] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+          </div>
+          <p className="text-4xl font-bold text-[#115b2a] mb-2">{stats.totalEventos.toLocaleString()}</p>
+          <p className="text-xs text-gray-500">Eventos analisados</p>
+        </div>
+
+        {/* Horário de Pico */}
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Horário de Pico</h3>
+            <svg className="w-6 h-6 text-[#115b2a] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p className="text-4xl font-bold text-[#115b2a] mb-2">{topHorarios[0]?.hora || 0}h</p>
+          <p className="text-xs text-gray-500">{(topHorarios[0]?.acessos || 0).toLocaleString()} acessos</p>
+        </div>
+
+        {/* Todos os Recursos Acessados */}
+        <div 
+          className="bg-white border-2 border-gray-200 rounded-lg p-6 cursor-pointer hover:border-[#115b2a] hover:shadow-lg transition-all"
+          onClick={() => setShowRecursosModal(true)}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Todos os Recursos</h3>
+            <svg className="w-6 h-6 text-[#115b2a] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+          <p className="text-2xl font-bold text-[#115b2a] mb-2 truncate">
+            {stats.recursosMaisUsados[0]?.categoria || "N/A"}
+          </p>
+          <p className="text-xs text-gray-500">
+            {(stats.recursosMaisUsados[0]?.quantidade || 0).toLocaleString()} acessos
+          </p>
+        </div>
+
+        {/* Erros/Lentidão */}
+        <div 
+          className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-6 cursor-pointer hover:border-red-400 hover:shadow-lg transition-all"
+          onClick={() => setShowErrosModal(true)}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-700">Erros/Lentidão</h3>
+            <svg className="w-6 h-6 text-red-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+          <p className="text-4xl font-bold text-red-600 mb-2">
+            {stats.estatisticasSaude ? (stats.estatisticasSaude.error + stats.estatisticasSaude.slow).toLocaleString() : 0}
+          </p>
+          <p className="text-xs text-gray-600">
+            {stats.estatisticasSaude ? 
+              ((((stats.estatisticasSaude.error + stats.estatisticasSaude.slow) / stats.totalEventos) * 100).toFixed(1)) : 0}% do total
+          </p>
+        </div>
+      </div>
+
+      {/* Gráfico de Horários */}
+      <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-lg font-semibold text-gray-800">Acessos por Horário</h3>
+          <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg border border-gray-200">
+            <button
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='24h' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
+              onClick={() => setViewMode('24h')}
+              disabled={!stats?.horarios24h}
+              title={stats?.horarios24h ? 'Mostrar últimas 24h' : 'Sem dados de 24h; usando período'}
+            >
+              Últimas 24h
+            </button>
+            <button
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='period' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
+              onClick={() => setViewMode('period')}
+              title={`Mostrar período selecionado (${period} dias)`}
+            >
+              Período
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          {viewMode==='24h' ? 'Últimas 24 horas' : `Últimos ${stats.periodoDias || period} dias`}
+        </p>
+        <div style={{ height: '300px' }} className="mb-4">
+          <Bar 
+            key={`horarios-${viewMode}-${limit}-${period}-${stats.totalEventos}`}
+            data={horariosData} 
+            options={horariosOptions} 
+          />
+        </div>
+        
+        {/* Lista dos 3 horários de pico */}
+        <div className="pt-4 border-t border-gray-200">
+          <p className="text-sm font-medium text-gray-600 mb-3">Horários de maior acesso:</p>
+          <div className="flex flex-wrap gap-3">
+            {topHorarios.map((h, idx) => (
+              <div key={h.hora} className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#115b2a] text-white text-xs font-bold">
+                  {idx + 1}
+                </span>
+                <span className="text-sm font-medium text-gray-700">{h.hora}h</span>
+                <span className="text-sm text-gray-500">•</span>
+                <span className="text-sm text-gray-600">{h.acessos.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        {routesTopData.length > 0 && (
+          <div className="pt-6 border-t border-gray-200 mt-4">
+            <button
+              onClick={() => setShowRoutes(!showRoutes)}
+              className="flex items-center justify-between w-full text-left mb-3 hover:bg-gray-50 p-2 rounded transition"
+            >
+              <p className="text-sm font-medium text-gray-600">
+                Rotas mais acessadas ({viewMode==='24h' ? '24h' : `período (${stats.periodoDias || period} dias)`})
+              </p>
+              <svg
+                className={`w-5 h-5 text-gray-600 transition-transform ${showRoutes ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showRoutes && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {routesTopData.slice(0, 10).map((r, idx) => (
+                  <div key={`${r.name}-${idx}`} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-6 h-6 flex items-center justify-center bg-[#115b2a] text-white text-xs font-bold rounded">{idx+1}</span>
+                      <span className="text-xs text-gray-700 truncate" title={r.name}>{r.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-sm font-semibold text-gray-800">{(r.quantidade||0).toLocaleString()}</span>
+                      <span className="text-xs text-gray-500 ml-1">acessos</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Recursos */}
+      {showRecursosModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowRecursosModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg max-w-4xl w-full max-h-[85vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header do Modal */}
+            <div className="bg-[#115b2a] px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Todos os Recursos Acessados</h3>
+              <button
+                onClick={() => setShowRecursosModal(false)}
+                className="text-white/80 hover:text-white transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Conteúdo do Modal */}
+            <div className="p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
+              <div className="space-y-2">
+                {stats.recursosMaisUsados.map((r, idx) => {
+                  const total = stats.recursosMaisUsados.reduce((sum, item) => sum + item.quantidade, 0);
+                  const percentage = ((r.quantidade / total) * 100).toFixed(1);
+                  const hasErrors = r.erros > 0;
+                  
+                  return (
+                    <div 
+                      key={r.categoria} 
+                      className={`p-4 rounded-lg transition-all ${
+                        hasErrors 
+                          ? 'bg-red-50 border-2 border-red-200 hover:border-red-400 cursor-pointer' 
+                          : 'bg-gray-50 hover:bg-gray-100'
+                      }`}
+                      onClick={() => hasErrors && setSelectedRecurso(r)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-[#115b2a] text-white text-sm font-bold flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-gray-800 truncate">{r.categoria}</p>
+                              {hasErrors && (
+                                <span className="flex items-center gap-1 text-xs text-red-600 font-semibold">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                  </svg>
+                                  {r.erros} erros ({r.taxaErro}%)
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500">{percentage}% do total</p>
+                          </div>
+                        </div>
+                        <div className="text-right ml-4 flex items-center gap-3">
+                          <div>
+                            <p className="text-lg font-bold text-[#115b2a]">{r.quantidade.toLocaleString()}</p>
+                            <p className="text-xs text-gray-500">acessos</p>
+                          </div>
+                          {hasErrors && (
+                            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Detalhes de Erros */}
+      {selectedRecurso && (
+        <div 
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"
+          onClick={() => {
+            setSelectedRecurso(null);
+            setShowErrosModal(true);
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-red-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setSelectedRecurso(null);
+                    setShowErrosModal(true);
+                  }}
+                  className="text-white/80 hover:text-white transition-colors p-1 hover:bg-white/20 rounded"
+                  title="Voltar para lista de erros"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <h3 className="text-lg font-semibold text-white">Erros - {selectedRecurso.categoria}</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedRecurso(null);
+                  setShowErrosModal(false);
+                }}
+                className="text-white/80 hover:text-white transition-colors"
+                title="Fechar tudo"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
+              {/* Resumo */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600 mb-1">Total de Acessos</p>
+                  <p className="text-2xl font-bold text-gray-800">{selectedRecurso.quantidade.toLocaleString()}</p>
+                </div>
+                <div className="bg-red-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600 mb-1">Total de Erros</p>
+                  <p className="text-2xl font-bold text-red-600">{selectedRecurso.erros.toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">Taxa: {selectedRecurso.taxaErro}%</p>
+                </div>
+              </div>
+
+              {/* Lista de Tipos de Erro */}
+              <div>
+                <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                  Tipos de Erros Encontrados
+                </h4>
+                {selectedRecurso.tiposErro && selectedRecurso.tiposErro.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedRecurso.tiposErro.map((erro, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                            {idx + 1}
+                          </span>
+                          <p className="text-sm font-medium text-gray-800 truncate">{erro.tipo || "Erro desconhecido"}</p>
+                        </div>
+                        <span className="text-sm font-bold text-red-600 ml-3">{erro.quantidade}x</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center p-6 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-500">Nenhum tipo de erro específico identificado</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Erros */}
+      {showErrosModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowErrosModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-hidden shadow-xl border-2 border-gray-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-white border-b-2 border-gray-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-red-100 p-2 rounded-lg">
+                    <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-800">Rotas com Erros</h2>
+                    <p className="text-sm text-gray-600">Identifique e resolva problemas</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowErrosModal(false)}
+                  className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-2 rounded-lg transition-all"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Navegação entre Erros e Lentas */}
+            <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 text-white font-medium rounded-lg"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span>Erros ({stats.recursosMaisUsados.filter(r => r.erros > 0).length})</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowErrosModal(false);
+                    setShowSlowModal(true);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border-2 border-gray-200 text-gray-700 font-medium rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-all"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Lentidões ({stats.recursosMaisUsados.filter(r => r.lentas > 0).length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)] bg-white">
+              {/* Cards de Estatísticas */}
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div className="bg-white p-4 rounded-lg border-2 border-red-200">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total de Erros</p>
+                      <p className="text-2xl font-bold text-red-600">
+                        {stats.estatisticasSaude?.error || 0}
+                      </p>
+                    </div>
+                    <div className="bg-red-100 p-2 rounded-lg">
+                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white p-4 rounded-lg border-2 border-red-200">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Taxa de Erro</p>
+                      <p className="text-2xl font-bold text-red-600">
+                        {stats.estatisticasSaude ? 
+                          (((stats.estatisticasSaude.error / stats.totalEventos) * 100).toFixed(1)) : 0}%
+                      </p>
+                    </div>
+                    <div className="bg-red-100 p-2 rounded-lg">
+                      <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de Rotas */}
+              {stats.recursosMaisUsados.filter(r => r.erros > 0).length > 0 ? (
+                <div className="space-y-2">
+                  {stats.recursosMaisUsados
+                    .filter(r => r.erros > 0)
+                    .sort((a, b) => b.taxaErro - a.taxaErro)
+                    .map((r, idx) => (
+                      <div 
+                        key={r.categoria}
+                        className="bg-white rounded-lg p-4 border-2 border-gray-200 hover:border-red-400 hover:shadow-sm transition-all cursor-pointer group"
+                        onClick={() => {
+                          setSelectedRecurso(r);
+                          setShowErrosModal(false);
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Ranking Badge */}
+                          <div className="flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base ${
+                              idx === 0 ? 'bg-red-600 text-white' :
+                              idx === 1 ? 'bg-red-500 text-white' :
+                              idx === 2 ? 'bg-red-400 text-white' :
+                              'bg-gray-200 text-gray-700'
+                            }`}>
+                              {idx + 1}
+                            </div>
+                          </div>
+
+                          {/* Informação da Rota */}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-gray-900 text-sm mb-1 truncate">
+                              {r.categoria}
+                            </h4>
+                            <div className="flex items-center gap-3 text-xs text-gray-600">
+                              <span className="flex items-center gap-1">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>
+                                {r.quantidade.toLocaleString()} acessos
+                              </span>
+                              <span className="flex items-center gap-1 text-red-600 font-medium">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                {r.erros} erros
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Taxa de Erro */}
+                          <div className="flex-shrink-0 text-right">
+                            <div className="text-xl font-bold text-gray-800">{r.taxaErro}%</div>
+                            <div className="text-xs text-gray-500 uppercase tracking-wide">Taxa</div>
+                          </div>
+
+                          {/* Ícone de Ação */}
+                          <div className="flex-shrink-0">
+                            <svg className="w-5 h-5 text-gray-400 group-hover:text-[#115b2a] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+                  <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">Nenhum erro encontrado</h3>
+                  <p className="text-sm text-gray-600">Todas as rotas estão funcionando corretamente.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Rotas Lentas */}
+      {showSlowModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowSlowModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-hidden shadow-xl border-2 border-gray-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-white border-b-2 border-gray-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-yellow-100 p-2 rounded-lg">
+                    <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-800">Rotas com Lentidões</h2>
+                    <p className="text-sm text-gray-600">Otimize o desempenho das rotas</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowSlowModal(false)}
+                  className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-2 rounded-lg transition-all"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Navegação entre Erros e Lentas */}
+            <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowSlowModal(false);
+                    setShowErrosModal(true);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-white border-2 border-gray-200 text-gray-700 font-medium rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-all"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span>Erros ({stats.recursosMaisUsados.filter(r => r.erros > 0).length})</span>
+                </button>
+                <button
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-yellow-500 text-white font-medium rounded-lg"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Lentidões ({stats.recursosMaisUsados.filter(r => r.lentas > 0).length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Conteúdo */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)] bg-white">
+              {/* Cards de Estatísticas */}
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total de Lentidões</p>
+                      <p className="text-2xl font-bold text-yellow-600">
+                        {stats.estatisticasSaude?.slow || 0}
+                      </p>
+                    </div>
+                    <div className="bg-yellow-100 p-2 rounded-lg">
+                      <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Taxa de Lentidão</p>
+                      <p className="text-2xl font-bold text-yellow-600">
+                        {stats.estatisticasSaude ? 
+                          (((stats.estatisticasSaude.slow / stats.totalEventos) * 100).toFixed(1)) : 0}%
+                      </p>
+                    </div>
+                    <div className="bg-yellow-100 p-2 rounded-lg">
+                      <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de Rotas */}
+              {stats.recursosMaisUsados.filter(r => r.lentas > 0).length > 0 ? (
+                <div className="space-y-2">
+                  {stats.recursosMaisUsados
+                    .filter(r => r.lentas > 0)
+                    .sort((a, b) => b.taxaLenta - a.taxaLenta)
+                    .map((r, idx) => (
+                      <div 
+                        key={r.categoria}
+                        className="bg-white rounded-lg p-4 border-2 border-gray-200 hover:border-yellow-400 hover:shadow-sm transition-all cursor-pointer group"
+                        onClick={() => {
+                          setSelectedRecurso(r);
+                          setShowSlowModal(false);
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Ranking Badge */}
+                          <div className="flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base ${
+                              idx === 0 ? 'bg-yellow-600 text-white' :
+                              idx === 1 ? 'bg-yellow-500 text-white' :
+                              idx === 2 ? 'bg-yellow-400 text-white' :
+                              'bg-gray-200 text-gray-700'
+                            }`}>
+                              {idx + 1}
+                            </div>
+                          </div>
+
+                          {/* Informação da Rota */}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-gray-900 text-sm mb-1 truncate">
+                              {r.categoria}
+                            </h4>
+                            <div className="flex items-center gap-3 text-xs text-gray-600">
+                              <span className="flex items-center gap-1">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>
+                                {r.quantidade.toLocaleString()} acessos
+                              </span>
+                              <span className="flex items-center gap-1 text-yellow-600 font-medium">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                {r.lentas} lentas
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Taxa de Lentidão */}
+                          <div className="flex-shrink-0 text-right">
+                            <div className="text-xl font-bold text-yellow-600">{r.taxaLenta}%</div>
+                            <div className="text-xs text-gray-500 uppercase tracking-wide">Taxa</div>
+                          </div>
+
+                          {/* Ícone de Ação */}
+                          <div className="flex-shrink-0">
+                            <svg className="w-5 h-5 text-gray-400 group-hover:text-yellow-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+                  <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">Nenhuma lentidão detectada</h3>
+                  <p className="text-sm text-gray-600">O desempenho de todas as rotas está ótimo.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

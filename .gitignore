@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build output
+frontend/dist/
+build/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/db/*.db
+
+# Logs and pids
+*.log
+nohup.out
+nohup.pid
+*.pid
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
