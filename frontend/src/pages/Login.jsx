@@ -19,7 +19,7 @@ export default function Login({ onSuccess }) {
       localStorage.setItem("fps_token", data.token);
       if (data.user) {
         localStorage.setItem("fps_user", JSON.stringify(data.user));
-      }
+      } 
       onSuccess?.();
     } catch (e) {
       setErr(e?.message || "Erro ao fazer login.");

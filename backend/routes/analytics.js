@@ -11,3 +11,4 @@ router.get("/search-logs", requireAuth, requireAdmin, getSearchLogs);
 router.get("/search-logs.csv", requireAuth, requireAdmin, exportSearchLogsCSV);
 
 export default router;
+

@@ -21,7 +21,7 @@ ChartJS.register(
   Tooltip,
   Legend
 );
-
+ 
 // Componente Dropdown Customizado
 function CustomDropdown({ options, value, onChange, placeholder }) {
   const [isOpen, setIsOpen] = useState(false);

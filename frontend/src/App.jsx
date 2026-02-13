@@ -19,7 +19,7 @@ function ProtectedRoute({ children, adminOnly = false }) {
 
   return children;
 }
-
+ 
 export default function App() {
   const [authed, setAuthed] = useState(false);
   

@@ -23,6 +23,7 @@ router.post('/import-data', async (req, res) => {
     await supabase.from('sync_metadata').delete().neq('id', 0);
     console.log('🗑️  Dados existentes removidos');
     
+    
     // Importa transactions em chunks
     if (transactions.length > 0) {
       console.log('📦 Importando transactions...');

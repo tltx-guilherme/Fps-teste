@@ -467,3 +467,4 @@ export async function exportSearchLogsCSV(req, res) {
     res.status(500).json({ error: "Falha ao exportar CSV" });
   }
 }
+

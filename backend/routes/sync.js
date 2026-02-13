@@ -17,7 +17,7 @@ router.post('/sync', async (req, res) => {
   }
 });
 
-// Verifica status da sincronização
+// Verifica  status da sincronização
 router.get('/sync/status', async (req, res) => {
   try {
     const status = await getSyncStatus();

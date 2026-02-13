@@ -224,7 +224,7 @@ export default function Auditoria() {
                     ) : (
                       <span>Exportará <strong>todos os dados</strong> (sem filtros). Use os campos acima para filtrar por período</span>
                     )}
-                  </div>
+                  </div> 
                   <button 
                     type="button" 
                     onClick={handleExportCSV} 

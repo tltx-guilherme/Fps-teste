@@ -25,6 +25,7 @@ export function requireAuth(req, res, next) {
   next();
 }
 
+
 // Exige admin. Se a env ADMIN_USER_IDS existir, valida contra ela; se não existir, permite qualquer autenticado.
 export function requireAdmin(req, res, next) {
   if (!req.userId) {

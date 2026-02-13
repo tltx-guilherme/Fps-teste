@@ -179,6 +179,7 @@ export async function syncDatabase(options = {}) {
       return { success: true, baseline: true, newRecords: 0, totalRecords: 0 };
     }
 
+    
     const data = await fetchFromAppDynamics(limit, lastSync);
     const rows = data?.results || [];
 

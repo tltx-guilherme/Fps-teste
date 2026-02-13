@@ -16,7 +16,7 @@ export async function apiGet(path) {
   }
   return res.json();
 }
-
+ 
 export async function apiPost(path, body) {
   const res = await fetch(`${API_BASE_URL}/${path}`, {
     method: 'POST',

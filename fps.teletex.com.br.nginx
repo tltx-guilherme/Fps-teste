@@ -15,7 +15,7 @@ server {
     ssl_certificate_key /home/admin_django/.ctltx/cert-tltx.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-
+ 
     root /home/admin_django/projetos/clientes/fps/frontend/dist;
     index index.html;
 

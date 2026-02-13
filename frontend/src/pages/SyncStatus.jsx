@@ -17,7 +17,7 @@ export default function SyncStatus() {
       setLoading(false);
     }
   }
-
+ 
   async function forceSync() {
     try {
       setSyncing(true);

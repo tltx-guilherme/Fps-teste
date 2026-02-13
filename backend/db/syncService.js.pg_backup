@@ -72,6 +72,7 @@ export async function initDatabase() {
   console.log('✅ Banco de dados PostgreSQL inicializado');
 }
 
+
 // Registra auditoria de pesquisa por RA
 export async function logSearchRA({ ra, userId, ip }) {
   await pool.query(

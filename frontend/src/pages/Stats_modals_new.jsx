@@ -22,7 +22,7 @@
                     <p className="text-red-100 text-sm mt-1">Identifique e resolva problemas rapidamente</p>
                   </div>
                 </div>
-                <button
+                <button 
                   onClick={() => setShowErrosModal(false)}
                   className="text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-lg transition-all"
                 >
