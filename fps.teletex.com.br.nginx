@@ -16,7 +16,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
  
-    root /home/admin_django/projetos/clientes/fps/frontend/dist;
+    root /home/admin_django/projetos/fps/frontend/dist;
     index index.html;
 
     location /api/ {
