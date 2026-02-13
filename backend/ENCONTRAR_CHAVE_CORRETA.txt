@@ -1,0 +1,86 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║          🔍 ONDE ENCONTRAR A CHAVE JWT CORRETA DO SUPABASE            ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+❌ CHAVES ERRADAS (NÃO USE ESTAS):
+   • sb_publishable_tOVU1kDX2xW9q-BuUmTq4Q_62WouZUh  ← ERRADO!
+   • sb_publishable_JvtmCb5AE3IRQ1uT7NHDVA_8gVqxkpQ  ← ERRADO!
+   
+   Estas não funcionam com o Supabase SDK!
+
+
+✅ ONDE ENCONTRAR A CHAVE CORRETA:
+
+1️⃣  Acesse a página de configurações de API:
+    https://supabase.com/dashboard/project/jdwgrzkxpdehrprcxxhm/settings/api
+
+2️⃣  Role a página até encontrar a seção "Project API keys"
+
+3️⃣  Você verá algo assim:
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ Project API keys                                                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│ [anon] [public]                                                     │
+│ Use this key in the browser                                         │
+│                                                                     │
+│ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI │  ← ESTA!
+│ nJlZiI6Impkd2dyemt4cGRlaHJwcmN4eGhtIiwicm9sZSI6ImFub24iLCJpY │     COPIE
+│ XQiOjE3Mzk4NzA2ODksImV4cCI6MjA1NTQ0NjY4OX0.gNqVCw9c9-zpKP4L │     TODA
+│ LOdGBQjrKrP2gxBuwmE0dGGZRDc                                        │     ESTA
+│                                                                     │     LINHA
+│ [Copy]                                                              │  ← CLIQUE
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│ [service_role] [secret]                                             │
+│ Use this key in the server                                          │
+│                                                                     │
+│ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI │  ← OU ESTA
+│ nJlZiI6Impkd2dyemt4cGRlaHJwcmN4eGhtIiwicm9sZSI6InNlcnZpY2Vfc │     (MELHOR)
+│ m9sZSIsImlhdCI6MTczOTg3MDY4OSwi... [Reveal]                      │  ← CLIQUE
+│                                                                     │  "Reveal"
+│ [Copy]                                                              │  E COPIE
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+🎯 CARACTERÍSTICAS DA CHAVE CORRETA:
+
+   ✅ Começa com: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ...
+   ✅ Tem cerca de 200-300 caracteres
+   ✅ Tem 3 partes separadas por pontos (.)
+   ✅ É chamada de "anon public" ou "service_role secret"
+   ✅ Ao clicar em [Copy] copia toda a string longa
+
+
+❌ NÃO É:
+   
+   ✗ Não começa com "sb_publishable_"
+   ✗ Não tem apenas ~50 caracteres
+   ✗ Não está em formato JSON como você enviou
+
+
+📝 EXEMPLO DE COMO A CHAVE DEVE SER:
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impkd2dyemt4cGRlaHJwcmN4eGhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk4NzA2ODksImV4cCI6MjA1NTQ0NjY4OX0.gNqVCw9c9-zpKP4LLOdGBQjrKrP2gxBuwmE0dGGZRDc
+
+👆 ESTA é uma chave JWT válida! (exemplo com "anon public")
+
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║ 🚀 AÇÃO IMEDIATA:                                                     ║
+║                                                                       ║
+║ 1. Acesse: https://supabase.com/.../settings/api                    ║
+║ 2. Procure a seção "Project API keys"                               ║
+║ 3. Clique em [Copy] na chave "service_role secret"                  ║
+║    (ou "anon public" se não encontrar service_role)                 ║
+║ 4. A chave copiada DEVE começar com eyJhbGc...                      ║
+║ 5. Cole aqui para eu ajudar você a configurar!                      ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+
+💡 DICA: Se não conseguir ver a chave completa na tela, clique no botão
+         [Copy] e cole em um editor de texto para verificar se começa
+         com "eyJ" e tem muitos caracteres.

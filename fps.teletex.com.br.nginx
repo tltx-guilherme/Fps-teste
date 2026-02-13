@@ -30,6 +30,10 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location = / {
+        return 302 /login;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getLocalStats, getSyncStatus, logSearchRA, queryLocal } from "../db/syncService.js";
+import { getLocalStats, getSyncStatus, logSearchRA, queryLocal, getSearchLogsDB, getAllSearchLogsDB } from "../db/syncService.js";
 
 // Função para categorizar URLs
 function categorizeUrl(url, urlResumida) {
@@ -31,7 +31,8 @@ export async function getGeneralStats(req, res) {
   // Suporte a limit=all (sem limite) além de valor numérico
   const rawLimit = req.query.limit;
   const unlimited = rawLimit === 'all';
-  const limit = unlimited ? null : Math.min(parseInt(rawLimit) || 100000, 200000);
+  const maxLimit = 500000;
+  const limit = unlimited ? null : Math.min(parseInt(rawLimit) || 100000, maxLimit);
   
   // Permite filtrar por período (dias)
   const periodDays = parseInt(req.query.days) || 7;
@@ -382,64 +383,32 @@ export async function getSearchLogs(req, res) {
       order = "desc",
     } = req.query;
 
-    const filters = [];
-    const params = [];
-
     const toMs = (value) => {
       const raw = isNaN(Number(value)) ? new Date(value).getTime() : Number(value);
       if (isNaN(raw)) return null;
       return raw < 1e12 ? raw * 1000 : raw;
     };
 
-    if (ra) {
-      params.push(String(ra));
-      filters.push(`ra = $${params.length}`);
-    }
     const userId = userIdParam || userIdAlt;
-    if (userId) {
-      params.push(String(userId));
-      filters.push(`user_id = $${params.length}`);
-    }
-    if (start) {
-      const ts = toMs(start);
-      if (ts) {
-        params.push(ts);
-        filters.push(`searched_at >= $${params.length}`);
-      }
-    }
-    if (end) {
-      const ts = toMs(end);
-      if (ts) {
-        params.push(ts);
-        filters.push(`searched_at <= $${params.length}`);
-      }
-    }
-
-    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-
     const limit = Math.max(0, Math.min(parseInt(limitParam) || 100, 1000));
     const offset = Math.max(0, parseInt(offsetParam) || 0);
-    const ord = String(order).toLowerCase() === "asc" ? "ASC" : "DESC";
+    const ord = String(order).toLowerCase() === "asc" ? "asc" : "desc";
 
-    const sql = `
-      SELECT id, ra, user_id, ip,
-             to_timestamp(searched_at / 1000.0) AS searched_at
-      FROM search_logs
-      ${where}
-      ORDER BY searched_at ${ord}
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `;
-
-    const rows = await queryLocal(sql, [...params, limit, offset]);
-
-    const countSql = `SELECT COUNT(*)::bigint as total FROM search_logs ${where}`;
-    const countRow = (await queryLocal(countSql, params))[0] || { total: 0 };
-
-    res.json({
-      total: countRow.total,
+    const { rows, total } = await getSearchLogsDB({
+      ra: ra || null,
+      userId: userId || null,
+      start: start ? toMs(start) : null,
+      end: end ? toMs(end) : null,
       limit,
       offset,
       order: ord,
+    });
+
+    res.json({
+      total,
+      limit,
+      offset,
+      order: ord.toUpperCase(),
       results: rows,
     });
   } catch (e) {
@@ -451,7 +420,6 @@ export async function getSearchLogs(req, res) {
 // Exporta logs em CSV
 export async function exportSearchLogsCSV(req, res) {
   try {
-    // Reusa filtros do getSearchLogs
     const {
       ra,
       user_id: userIdParam,
@@ -461,46 +429,28 @@ export async function exportSearchLogsCSV(req, res) {
       order = "desc",
     } = req.query;
 
-    const filters = [];
-    const params = [];
-
     const toMs = (value) => {
       const raw = isNaN(Number(value)) ? new Date(value).getTime() : Number(value);
       if (isNaN(raw)) return null;
       return raw < 1e12 ? raw * 1000 : raw;
     };
 
-    if (ra) { params.push(String(ra)); filters.push(`ra = $${params.length}`); }
     const userId = userIdParam || userIdAlt;
-    if (userId) { params.push(String(userId)); filters.push(`user_id = $${params.length}`); }
-    if (start) {
-      const ts = toMs(start);
-      if (ts) { params.push(ts); filters.push(`searched_at >= $${params.length}`); }
-    }
-    if (end) {
-      const ts = toMs(end);
-      if (ts) { params.push(ts); filters.push(`searched_at <= $${params.length}`); }
-    }
+    const ord = String(order).toLowerCase() === "asc" ? "asc" : "desc";
 
-    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-    const ord = String(order).toLowerCase() === "asc" ? "ASC" : "DESC";
-
-    const sql = `
-      SELECT ra, user_id, ip,
-             to_timestamp(searched_at / 1000.0) AS searched_at
-      FROM search_logs
-      ${where}
-      ORDER BY searched_at ${ord}
-    `;
-
-    const rows = await queryLocal(sql, params);
+    const rows = await getAllSearchLogsDB({
+      ra: ra || null,
+      userId: userId || null,
+      start: start ? toMs(start) : null,
+      end: end ? toMs(end) : null,
+      order: ord,
+    });
 
     // Monta CSV
     const header = ['ra','user_id','ip','searched_at'];
     const lines = [header.join(',')];
     for (const r of rows) {
       const vals = [r.ra, r.user_id, r.ip || '', r.searched_at];
-      // Escapar vírgulas e aspas
       const safe = vals.map(v => {
         const s = String(v ?? '');
         return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;

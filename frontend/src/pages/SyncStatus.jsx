@@ -144,10 +144,11 @@ export default function SyncStatus() {
             <div className="bg-gray-50 border-2 border-gray-200 rounded-lg p-4">
               <h3 className="font-semibold text-gray-800 mb-3">ℹ️ Informações</h3>
               <ul className="text-sm text-gray-600 space-y-2">
-                <li>• A sincronização ocorre automaticamente a cada 10 minutos</li>
-                <li>• Mantém até 30 dias de histórico no banco local</li>
-                <li>• Usa banco SQLite para consultas ultra-rápidas</li>
+                <li>• A sincronização ocorre automaticamente a cada 2 minutos</li>
+                <li>• Mantém até 1 ano de histórico no Supabase PostgreSQL</li>
+                <li>• Usa Supabase PostgreSQL para consultas rápidas e escaláveis</li>
                 <li>• Fallback automático para AppDynamics se necessário</li>
+                <li>• Busca apenas eventos novos (incremental)</li>
               </ul>
             </div>
           </div>

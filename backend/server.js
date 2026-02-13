@@ -48,7 +48,8 @@ const {
   APPD_API_KEY,
   APPD_ACCOUNT_NAME,
   APPD_ANALYTICS_URL,
-  DATABASE_URL,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
   LOGIN_EMAIL,
   LOGIN_PASSWORD,
   LOGIN_USER_ID,
@@ -66,7 +67,8 @@ if (!JWT_SECRET) throw new Error("❌ JWT_SECRET não definido no .env");
 if (!APPD_API_KEY) throw new Error("❌ APPD_API_KEY não definida no .env");
 if (!APPD_ACCOUNT_NAME) throw new Error("❌ APPD_ACCOUNT_NAME não definida no .env");
 if (!APPD_ANALYTICS_URL) throw new Error("❌ APPD_ANALYTICS_URL não definida no .env");
-if (!DATABASE_URL) throw new Error("❌ DATABASE_URL não definida no .env");
+if (!SUPABASE_URL) throw new Error("❌ SUPABASE_URL não definida no .env");
+if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error("❌ SUPABASE_SERVICE_ROLE_KEY não definida no .env");
 if (!LOGIN_EMAIL) throw new Error("❌ LOGIN_EMAIL não definido no .env");
 if (!LOGIN_PASSWORD) throw new Error("❌ LOGIN_PASSWORD não definida no .env");
 if (!LOGIN_USER_ID) throw new Error("❌ LOGIN_USER_ID não definido no .env");
@@ -147,17 +149,21 @@ app.post("/api/start-sync", async (req, res) => {
 // ========================
 
 const startServer = async () => {
-  console.log('� Iniciando servidor (banco será inicializado quando necessário)...');
-
-  // NOTE: initDatabase() e startAutoSync() pulados no startup devido a problemas de conectividade IPv6
-  // O banco será inicializado na primeira chamada que precisar dele
+  try {
+    console.log('🔄 Inicializando banco de dados Supabase...');
+    await initDatabase();
+    console.log('✅ Banco de dados pronto!');
+  } catch (error) {
+    console.error('⚠️  Erro ao inicializar banco (continuando mesmo assim):', error.message);
+  }
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 API FPS rodando em http://0.0.0.0:${PORT}`);
     console.log(`📡 Acessível externamente em http://${EXTERNAL_IP}:${PORT}`);
-    console.log(`⚠️  IMPORTANTE: Banco e sync precisam ser inicializados manualmente:`);
-    console.log(`   - POST /api/init-db para criar estrutura do banco`);
-    console.log(`   - POST /api/start-sync para iniciar sincronização`);
+    
+    // Inicia auto-sync após servidor estar rodando
+    const interval = parseInt(SYNC_INTERVAL_MINUTES) || 2;
+    startAutoSync(interval);
   });
 };
 

@@ -31,7 +31,9 @@ export function requireAdmin(req, res, next) {
     return res.status(401).json({ error: "Não autenticado" });
   }
   const list = (process.env.ADMIN_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
+  const loginUserId = process.env.LOGIN_USER_ID || "";
   if (list.length === 0) return next(); // sem configuração → não restringe além de login
   if (list.includes(String(req.userId))) return next();
+  if (loginUserId && String(req.userId) === String(loginUserId)) return next();
   return res.status(403).json({ error: "Acesso negado" });
 }
