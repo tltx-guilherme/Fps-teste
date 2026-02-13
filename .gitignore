@@ -25,3 +25,4 @@ nohup.pid
 .DS_Store
 .idea/
 .vscode/
+large_files_backup/
