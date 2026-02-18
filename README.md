@@ -1,13 +1,65 @@
-# FPS Interface (Proxy AppDynamics)
+# FPS Interface - Next.js Version
 
-Monorepo com `backend` (Express + OAuth2 Client Credentials para AppDynamics) e `frontend` (Vite + React + Tailwind).
-O backend expõe proxy seguro para `/events/query` do AppDynamics (Analytics), filtrando por RA na URL.
+Sistema de monitoramento de performance e auditoria de acessos, agora rodando em Next.js e otimizado para deploy no Vercel.
 
-## Passo a passo (Windows/Unix)
+## 🚀 Migração para Next.js
 
-### 1) Backend
-```
-cd backend
+Este projeto foi convertido de uma arquitetura com React/Vite + Express para **Next.js**, permitindo:
+
+- ✅ Deploy simplificado no Vercel
+- ✅ API routes serverless
+- ✅ Autenticação centralizada
+- ✅ Melhor performance
+- ✅ Sem necessidade de dois servidores separados
+
+## 📋 Pré-requisitos
+
+- Node.js 18+
+- npm ou yarn
+- Conta no Vercel (gratuita)
+- Credenciais do Supabase
+
+## 🔧 Setup Local
+
+\`\`\`bash
+# Instalar dependências
+npm install
+
+# Copiar variáveis de ambiente
+cp .env.local.example .env.local
+
+# Rodar em desenvolvimento
+npm run dev
+\`\`\`
+
+A aplicação estará em http://localhost:3000
+
+## 📦 Deploy no Vercel
+
+### Opção 1: Vercel CLI
+
+\`\`\`bash
+npm i -g vercel
+vercel
+\`\`\`
+
+### Opção 2: GitHub Integration
+
+1. Push código para GitHub
+2. Acesse https://vercel.com
+3. Clique "New Project"
+4. Selecione seu repositório
+5. Configure variáveis de ambiente
+6. Clique "Deploy"
+
+## 📝 Variáveis de Ambiente Necessárias
+
+| Variável | Descrição |
+|----------|-----------|
+| SUPABASE_URL | URL do Supabase |
+| SUPABASE_SERVICE_ROLE_KEY | Chave de serviço |
+| JWT_SECRET | Chave para JWT |
+| ADMIN_USER_IDS | IDs de admin (opcional) |
 copy .env.example .env   # (Windows) - ou: cp .env.example .env
 # edite o arquivo .env com seus valores reais (NÃO COMMITAR)
 npm install
