@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthed, isAdmin } from '@/lib/auth';
+import { isAuthed, isAdmin } from '@/lib/auth-client';
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const [authed, setAuthed] = useState(false);

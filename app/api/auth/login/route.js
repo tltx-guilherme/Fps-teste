@@ -1,5 +1,4 @@
 import { jsonResponse, errorResponse } from '@/lib/api-utils';
-import { setToken } from '@/lib/auth';
 
 // POST /api/auth/login
 export async function POST(request) {

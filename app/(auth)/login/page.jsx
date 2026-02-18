@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { setToken } from '@/lib/auth';
+import { setToken } from '@/lib/auth-client';
 import '@/app/styles/Login.css';
 
 export default function LoginPage() {

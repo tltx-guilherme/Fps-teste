@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getTokenFromRequest } from './lib/auth';
 
 export function middleware(request) {
   const { pathname } = request.nextUrl;
 
-  // Rotas públicas (não precisam de autenticação)
+  // Rotas publicas (nao precisam de autenticacao)
   const publicRoutes = ['/login', '/api/auth/login'];
   
   if (publicRoutes.includes(pathname)) {
@@ -12,7 +11,8 @@ export function middleware(request) {
   }
 
   // Para rotas protegidas (se implementar middleware de verdade)
-  // const token = getTokenFromRequest(request);
+  // const authHeader = request.headers.get('authorization') || '';
+  // const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   // if (!token) {
   //   return NextResponse.redirect(new URL('/login', request.url));
   // }
