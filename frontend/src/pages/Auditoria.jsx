@@ -11,44 +11,133 @@ import './Auditoria.css';
 
 registerLocale('pt-BR', ptBR);
 
+function formatAuditDate(value) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+const AUDIT_CACHE_KEY = "fps_auditoria_cache_v1";
+
+function readAuditCache() {
+  try {
+    const raw = sessionStorage.getItem(AUDIT_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.savedAt) return null;
+
+    // Mantém estado por até 2 horas para troca rápida entre páginas
+    if ((Date.now() - Number(parsed.savedAt)) > 2 * 60 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function parseCachedDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export default function Auditoria() {
-  const [logs, setLogs] = useState([]);
-  const [total, setTotal] = useState(0);
+  const initialCache = readAuditCache();
+  const [logs, setLogs] = useState(() => initialCache?.logs || []);
+  const [total, setTotal] = useState(() => initialCache?.total || 0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [countdown, setCountdown] = useState(20);
   
   // Filtros
-  const [ra, setRa] = useState('');
-  const [userId, setUserId] = useState('');
-  const [startDate, setStartDate] = useState(null);
-  const [endDate, setEndDate] = useState(null);
+  const [ra, setRa] = useState(() => initialCache?.filters?.ra || '');
+  const [userId, setUserId] = useState(() => initialCache?.filters?.userId || '');
+  const [startDate, setStartDate] = useState(() => parseCachedDate(initialCache?.filters?.startDate));
+  const [endDate, setEndDate] = useState(() => parseCachedDate(initialCache?.filters?.endDate));
   
   // Paginação
-  const [page, setPage] = useState(1);
-  const [limit] = useState(50);
-  const [order, setOrder] = useState('desc');
+  const [page, setPage] = useState(() => initialCache?.page || 1);
+  const [limit, setLimit] = useState(() => initialCache?.limit || 50);
+  const [order, setOrder] = useState(() => initialCache?.order || 'desc');
 
   useEffect(() => {
     fetchLogs();
-  }, [page, order]);
+  }, [page, order, limit]);
 
-  async function fetchLogs() {
+  useEffect(() => {
+    let refreshId;
+    let countdownId;
+
+    if (autoRefresh) {
+      countdownId = setInterval(() => {
+        setCountdown((prev) => (prev <= 1 ? 20 : prev - 1));
+      }, 1000);
+
+      refreshId = setInterval(() => {
+        fetchLogs();
+      }, 20000);
+    }
+
+    return () => {
+      if (refreshId) clearInterval(refreshId);
+      if (countdownId) clearInterval(countdownId);
+    };
+  }, [autoRefresh, page, order, limit, ra, userId, startDate, endDate]);
+
+  async function fetchLogs(overrides = {}) {
+    const effectiveRa = (overrides.ra ?? ra).trim();
+    const effectiveUserId = (overrides.userId ?? userId).trim();
+    const effectiveStartDate = Object.prototype.hasOwnProperty.call(overrides, 'startDate') ? overrides.startDate : startDate;
+    const effectiveEndDate = Object.prototype.hasOwnProperty.call(overrides, 'endDate') ? overrides.endDate : endDate;
+    const effectivePage = overrides.page ?? page;
+    const effectiveLimit = overrides.limit ?? limit;
+    const effectiveOrder = overrides.order ?? order;
+
     setLoading(true);
     setError('');
+    setWarning('');
     try {
       const params = new URLSearchParams();
-      if (ra) params.set('ra', ra);
-      if (userId) params.set('userId', userId);
-      if (startDate) params.set('start', startDate.toISOString());
-      if (endDate) params.set('end', endDate.toISOString());
-      params.set('limit', limit);
-      params.set('offset', (page - 1) * limit);
-      params.set('order', order);
+      if (effectiveRa) params.set('ra', effectiveRa);
+      if (effectiveUserId) params.set('userId', effectiveUserId);
+      if (effectiveStartDate) params.set('start', effectiveStartDate.toISOString());
+      if (effectiveEndDate) params.set('end', effectiveEndDate.toISOString());
+      params.set('limit', effectiveLimit);
+      params.set('offset', Math.max(0, (effectivePage - 1) * effectiveLimit));
+      params.set('order', effectiveOrder);
 
       const data = await apiGet(`analytics/search-logs?${params.toString()}`);
-      setLogs(data.results || []);
-      setTotal(data.total || 0);
+      const nextLogs = Array.isArray(data.results) ? data.results : [];
+      const nextTotal = data.total || 0;
+      setLogs(nextLogs);
+      setTotal(nextTotal);
+      if (data.warning) {
+        setWarning(data.warning);
+      }
+      setCountdown(20);
+      sessionStorage.setItem(AUDIT_CACHE_KEY, JSON.stringify({
+        logs: nextLogs,
+        total: nextTotal,
+        page: effectivePage,
+        limit: effectiveLimit,
+        order: effectiveOrder,
+        filters: {
+          ra: effectiveRa,
+          userId: effectiveUserId,
+          startDate: effectiveStartDate ? effectiveStartDate.toISOString() : null,
+          endDate: effectiveEndDate ? effectiveEndDate.toISOString() : null
+        },
+        savedAt: Date.now()
+      }));
     } catch (e) {
       setError(e?.message || 'Erro ao carregar logs');
     } finally {
@@ -58,16 +147,26 @@ export default function Auditoria() {
 
   function handleSearch(e) {
     e.preventDefault();
+    const normalizedRa = ra.trim();
+    const normalizedUserId = userId.trim();
+    if (normalizedRa !== ra) setRa(normalizedRa);
+    if (normalizedUserId !== userId) setUserId(normalizedUserId);
+
+    const shouldFetchNow = page === 1;
     setPage(1);
-    fetchLogs();
+    if (shouldFetchNow) {
+      fetchLogs({ page: 1, ra: normalizedRa, userId: normalizedUserId });
+    }
   }
 
   async function handleExportCSV() {
     try {
       setExporting(true);
+      const raValue = ra.trim();
+      const userValue = userId.trim();
       const params = new URLSearchParams();
-      if (ra) params.set('ra', ra);
-      if (userId) params.set('userId', userId);
+      if (raValue) params.set('ra', raValue);
+      if (userValue) params.set('userId', userValue);
       if (startDate) params.set('start', startDate.toISOString());
       if (endDate) params.set('end', endDate.toISOString());
       params.set('order', order);
@@ -114,7 +213,17 @@ export default function Auditoria() {
     setUserId('');
     setStartDate(null);
     setEndDate(null);
+    const shouldFetchNow = page === 1;
     setPage(1);
+    if (shouldFetchNow) {
+      fetchLogs({
+        ra: '',
+        userId: '',
+        startDate: null,
+        endDate: null,
+        page: 1
+      });
+    }
   }
 
   const totalPages = Math.ceil(total / limit);
@@ -251,8 +360,8 @@ export default function Auditoria() {
           </form>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-4 flex-wrap">
             <span className="text-sm text-gray-600">Total: <span className="font-bold text-gray-800">{total}</span> registros</span>
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-gray-600">Ordem:</label>
@@ -262,22 +371,64 @@ export default function Auditoria() {
                 <option value="asc">Mais antigas</option>
               </select>
             </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-600">Por página:</label>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  const nextLimit = Number(e.target.value) || 50;
+                  const shouldFetchNow = page === 1;
+                  setLimit(nextLimit);
+                  setPage(1);
+                  if (shouldFetchNow) {
+                    fetchLogs({ page: 1, limit: nextLimit });
+                  }
+                }}
+                className="px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:border-[#115b2a] focus:outline-none transition-colors font-medium"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all font-medium text-sm ${
+                autoRefresh
+                  ? 'bg-[#115b2a] text-white border-[#115b2a] hover:bg-[#0d4621]'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+              }`}
+              type="button"
+            >
+              <span>{autoRefresh ? `Atualiza em ${countdown}s` : 'Auto-refresh pausado'}</span>
+            </button>
+            <button
+              onClick={() => fetchLogs()}
+              disabled={loading}
+              className="p-2 rounded-lg border-2 border-gray-300 hover:border-[#115b2a] hover:bg-gray-50 transition-all disabled:opacity-50"
+              type="button"
+              title="Atualizar agora"
+            >
+              <svg className={`w-5 h-5 text-gray-700 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
           </div>
         </div>
 
+        {warning && <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg mb-4 font-medium">{warning}</div>}
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 font-medium">{error}</div>}
 
-        {loading ? (
-          <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-[#115b2a]"></div>
-            <p className="mt-4 text-gray-600 font-medium">Carregando...</p>
-          </div>
-        ) : logs.length === 0 ? (
+        {!loading && logs.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-500 font-medium">
             Nenhum registro encontrado
           </div>
         ) : (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden relative">
             <div className="bg-[#115b2a] px-4 py-3 shadow-sm">
               <h3 className="text-lg font-bold text-white tracking-tight">Registros de Auditoria</h3>
             </div>
@@ -293,18 +444,37 @@ export default function Auditoria() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-[#115b2a]/5 transition-colors">
-                      <td className="px-4 py-3 text-sm text-gray-600 font-medium">{log.id}</td>
-                      <td className="px-4 py-3 text-sm font-bold text-gray-900">{log.ra || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-700 font-medium">{log.user_id || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 font-mono">{log.ip || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 font-medium">{log.searched_at || '—'}</td>
-                    </tr>
-                  ))}
+                  {loading && logs.length === 0
+                    ? Array.from({ length: 8 }).map((_, idx) => (
+                        <tr key={`skeleton-${idx}`} className="animate-pulse">
+                          <td className="px-4 py-3"><div className="h-4 w-10 bg-gray-200 rounded"></div></td>
+                          <td className="px-4 py-3"><div className="h-4 w-24 bg-gray-200 rounded"></div></td>
+                          <td className="px-4 py-3"><div className="h-4 w-32 bg-gray-200 rounded"></div></td>
+                          <td className="px-4 py-3"><div className="h-4 w-28 bg-gray-200 rounded"></div></td>
+                          <td className="px-4 py-3"><div className="h-4 w-40 bg-gray-200 rounded"></div></td>
+                        </tr>
+                      ))
+                    : logs.map((log) => (
+                        <tr key={log.id} className="hover:bg-[#115b2a]/5 transition-colors">
+                          <td className="px-4 py-3 text-sm text-gray-600 font-medium">{log.id}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-gray-900">{log.ra || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700 font-medium">{log.user_id || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600 font-mono">{log.ip || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600 font-medium">{formatAuditDate(log.searched_at)}</td>
+                        </tr>
+                      ))}
                 </tbody>
               </table>
             </div>
+
+            {loading && logs.length > 0 && (
+              <div className="absolute inset-0 bg-white/55 backdrop-blur-[1px] pointer-events-none flex items-start justify-center pt-6">
+                <div className="bg-white border border-[#115b2a]/20 text-[#115b2a] text-sm font-semibold px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#115b2a] animate-pulse"></span>
+                  Atualizando tabela...
+                </div>
+              </div>
+            )}
 
             {totalPages > 1 && (
               <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex items-center justify-between">

@@ -86,13 +86,31 @@ function CustomDropdown({ options, value, onChange, placeholder }) {
   );
 }
 
-export default function Stats() {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+const STATS_CACHE_KEY = "fps_stats_cache_v1";
+
+function readStatsCache() {
+  try {
+    const raw = sessionStorage.getItem(STATS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.stats || !parsed?.savedAt) return null;
+
+    // Reaproveita cache por até 30 minutos para navegação entre páginas/abas
+    if ((Date.now() - Number(parsed.savedAt)) > 30 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export default function Stats({ isActive = true }) {
+  const initialStatsCache = readStatsCache();
+  const [stats, setStats] = useState(() => initialStatsCache?.stats || null);
+  const [loading, setLoading] = useState(() => !initialStatsCache?.stats);
   const [error, setError] = useState("");
-  const [limit, setLimit] = useState(100000);
-  const [period, setPeriod] = useState(7); // dias
-  const [viewMode, setViewMode] = useState('period'); // '24h' | 'period'
+  const [limit, setLimit] = useState(() => initialStatsCache?.limit || 100000);
+  const [period, setPeriod] = useState(() => initialStatsCache?.period || 7); // dias
+  const [viewMode, setViewMode] = useState(() => initialStatsCache?.viewMode || 'period'); // '24h' | 'period'
   const [showRecursosModal, setShowRecursosModal] = useState(false);
   const [selectedRecurso, setSelectedRecurso] = useState(null);
   const [showErrosModal, setShowErrosModal] = useState(false);
@@ -100,19 +118,32 @@ export default function Stats() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [countdown, setCountdown] = useState(30);
   const [showRoutes, setShowRoutes] = useState(false);
+  const [detailsReady, setDetailsReady] = useState(() => Boolean(initialStatsCache?.stats));
   
   // Ref para o banner do período
   const periodBannerRef = useRef(null);
+  const revealTimeoutRef = useRef(null);
 
   async function loadStats() {
+    const hasPreviousData = Boolean(stats);
+
     try {
       setLoading(true);
       setError("");
+      if (!hasPreviousData) {
+        setDetailsReady(false);
+      }
       const effectiveLimit = viewMode === 'period' ? 'all' : limit;
       console.log('Carregando stats - limite:', effectiveLimit, 'período:', period, 'dias', 'modo:', viewMode); // Debug
       const data = await apiGet(`analytics/stats?limit=${effectiveLimit}&days=${period}`);
       console.log('Stats recebidas:', data); // Debug
       setStats(data);
+      if (revealTimeoutRef.current) clearTimeout(revealTimeoutRef.current);
+      if (!hasPreviousData) {
+        revealTimeoutRef.current = setTimeout(() => setDetailsReady(true), 160);
+      } else {
+        setDetailsReady(true);
+      }
       setCountdown(30); // Reset countdown
     } catch (e) {
       console.error('Erro ao carregar stats:', e); // Debug
@@ -127,7 +158,7 @@ export default function Stats() {
     let intervalId;
     let countdownId;
     
-    if (autoRefresh && !loading) {
+    if (autoRefresh && isActive && !loading) {
       countdownId = setInterval(() => {
         setCountdown(prev => {
           if (prev <= 1) {
@@ -146,13 +177,35 @@ export default function Stats() {
       if (intervalId) clearInterval(intervalId);
       if (countdownId) clearInterval(countdownId);
     };
-  }, [autoRefresh, loading, limit, period, viewMode]); // eslint-disable-line
+  }, [autoRefresh, loading, limit, period, viewMode, isActive]); // eslint-disable-line
 
   useEffect(() => {
     console.log('useEffect disparado - limit:', limit, 'period:', period); // Debug
+    if (!isActive && stats) return;
     loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, period, viewMode]);
+  }, [limit, period, viewMode, isActive]);
+
+  useEffect(() => {
+    if (!stats) return;
+    try {
+      sessionStorage.setItem(STATS_CACHE_KEY, JSON.stringify({
+        stats,
+        limit,
+        period,
+        viewMode,
+        savedAt: Date.now()
+      }));
+    } catch {
+      // noop
+    }
+  }, [stats, limit, period, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (revealTimeoutRef.current) clearTimeout(revealTimeoutRef.current);
+    };
+  }, []);
   
   // Scroll para o banner quando o período mudar
   useEffect(() => {
@@ -221,12 +274,39 @@ export default function Stats() {
     return [];
   }, [stats, viewMode]);
 
-  if (loading) {
+  if (loading && !stats) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-[#115b2a] mb-4"></div>
-          <p className="text-gray-600">Carregando estatísticas...</p>
+      <div className="space-y-6 animate-pulse">
+        <div className="flex items-center justify-center gap-2 text-[#115b2a] text-sm font-semibold">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#115b2a] animate-pulse"></span>
+          Carregando primeiro bloco...
+        </div>
+
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="h-6 w-64 bg-gray-200 rounded"></div>
+            <div className="h-9 w-44 bg-gray-200 rounded-lg"></div>
+          </div>
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <div className="h-9 w-56 bg-gray-100 rounded-lg"></div>
+          </div>
+        </div>
+
+        <div className="rounded-xl p-6 border border-gray-200 bg-gray-50">
+          <div className="h-7 w-56 bg-gray-200 rounded mb-3"></div>
+          <div className="h-5 w-40 bg-gray-100 rounded"></div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white border-2 border-gray-200 rounded-lg p-6 h-36"></div>
+          <div className="bg-white border-2 border-gray-200 rounded-lg p-6 h-36"></div>
+          <div className="bg-white border-2 border-gray-200 rounded-lg p-6 h-36"></div>
+          <div className="bg-white border-2 border-gray-200 rounded-lg p-6 h-36"></div>
+        </div>
+
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+          <div className="h-6 w-56 bg-gray-200 rounded mb-4"></div>
+          <div className="h-[280px] bg-gray-100 rounded"></div>
         </div>
       </div>
     );
@@ -511,91 +591,106 @@ export default function Stats() {
       </div>
 
       {/* Gráfico de Horários */}
-      <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-lg font-semibold text-gray-800">Acessos por Horário</h3>
-          <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg border border-gray-200">
-            <button
-              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='24h' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
-              onClick={() => setViewMode('24h')}
-              disabled={!stats?.horarios24h}
-              title={stats?.horarios24h ? 'Mostrar últimas 24h' : 'Sem dados de 24h; usando período'}
-            >
-              Últimas 24h
-            </button>
-            <button
-              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='period' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
-              onClick={() => setViewMode('period')}
-              title={`Mostrar período selecionado (${period} dias)`}
-            >
-              Período
-            </button>
-          </div>
-        </div>
-        <p className="text-xs text-gray-500 mb-3">
-          {viewMode==='24h' ? 'Últimas 24 horas' : `Últimos ${stats.periodoDias || period} dias`}
-        </p>
-        <div style={{ height: '300px' }} className="mb-4">
-          <Bar 
-            key={`horarios-${viewMode}-${limit}-${period}-${stats.totalEventos}`}
-            data={horariosData} 
-            options={horariosOptions} 
-          />
-        </div>
-        
-        {/* Lista dos 3 horários de pico */}
-        <div className="pt-4 border-t border-gray-200">
-          <p className="text-sm font-medium text-gray-600 mb-3">Horários de maior acesso:</p>
-          <div className="flex flex-wrap gap-3">
-            {topHorarios.map((h, idx) => (
-              <div key={h.hora} className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#115b2a] text-white text-xs font-bold">
-                  {idx + 1}
-                </span>
-                <span className="text-sm font-medium text-gray-700">{h.hora}h</span>
-                <span className="text-sm text-gray-500">•</span>
-                <span className="text-sm text-gray-600">{h.acessos.toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        {routesTopData.length > 0 && (
-          <div className="pt-6 border-t border-gray-200 mt-4">
-            <button
-              onClick={() => setShowRoutes(!showRoutes)}
-              className="flex items-center justify-between w-full text-left mb-3 hover:bg-gray-50 p-2 rounded transition"
-            >
-              <p className="text-sm font-medium text-gray-600">
-                Rotas mais acessadas ({viewMode==='24h' ? '24h' : `período (${stats.periodoDias || period} dias)`})
-              </p>
-              <svg
-                className={`w-5 h-5 text-gray-600 transition-transform ${showRoutes ? 'rotate-180' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+      {detailsReady ? (
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-gray-800">Acessos por Horário</h3>
+            <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg border border-gray-200">
+              <button
+                className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='24h' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
+                onClick={() => setViewMode('24h')}
+                disabled={!stats?.horarios24h}
+                title={stats?.horarios24h ? 'Mostrar últimas 24h' : 'Sem dados de 24h; usando período'}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {showRoutes && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {routesTopData.slice(0, 10).map((r, idx) => (
-                  <div key={`${r.name}-${idx}`} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-6 h-6 flex items-center justify-center bg-[#115b2a] text-white text-xs font-bold rounded">{idx+1}</span>
-                      <span className="text-xs text-gray-700 truncate" title={r.name}>{r.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-sm font-semibold text-gray-800">{(r.quantidade||0).toLocaleString()}</span>
-                      <span className="text-xs text-gray-500 ml-1">acessos</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                Últimas 24h
+              </button>
+              <button
+                className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode==='period' ? 'bg-white border border-gray-300 text-gray-800' : 'text-gray-600 hover:text-gray-800'}`}
+                onClick={() => setViewMode('period')}
+                title={`Mostrar período selecionado (${period} dias)`}
+              >
+                Período
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+          <p className="text-xs text-gray-500 mb-3">
+            {viewMode==='24h' ? 'Últimas 24 horas' : `Últimos ${stats.periodoDias || period} dias`}
+          </p>
+          <div style={{ height: '300px' }} className="mb-4">
+            <Bar 
+              key={`horarios-${viewMode}-${limit}-${period}-${stats.totalEventos}`}
+              data={horariosData} 
+              options={horariosOptions} 
+            />
+          </div>
+          
+          {/* Lista dos 3 horários de pico */}
+          <div className="pt-4 border-t border-gray-200">
+            <p className="text-sm font-medium text-gray-600 mb-3">Horários de maior acesso:</p>
+            <div className="flex flex-wrap gap-3">
+              {topHorarios.map((h, idx) => (
+                <div key={h.hora} className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-lg">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#115b2a] text-white text-xs font-bold">
+                    {idx + 1}
+                  </span>
+                  <span className="text-sm font-medium text-gray-700">{h.hora}h</span>
+                  <span className="text-sm text-gray-500">•</span>
+                  <span className="text-sm text-gray-600">{h.acessos.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {routesTopData.length > 0 && (
+            <div className="pt-6 border-t border-gray-200 mt-4">
+              <button
+                onClick={() => setShowRoutes(!showRoutes)}
+                className="flex items-center justify-between w-full text-left mb-3 hover:bg-gray-50 p-2 rounded transition"
+              >
+                <p className="text-sm font-medium text-gray-600">
+                  Rotas mais acessadas ({viewMode==='24h' ? '24h' : `período (${stats.periodoDias || period} dias)`})
+                </p>
+                <svg
+                  className={`w-5 h-5 text-gray-600 transition-transform ${showRoutes ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showRoutes && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {routesTopData.slice(0, 10).map((r, idx) => (
+                    <div key={`${r.name}-${idx}`} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 flex items-center justify-center bg-[#115b2a] text-white text-xs font-bold rounded">{idx+1}</span>
+                        <span className="text-xs text-gray-700 truncate" title={r.name}>{r.name}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold text-gray-800">{(r.quantidade||0).toLocaleString()}</span>
+                        <span className="text-xs text-gray-500 ml-1">acessos</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white border-2 border-gray-200 rounded-lg p-6 animate-pulse">
+          <div className="flex items-center justify-center gap-2 text-[#115b2a] text-sm font-semibold mb-4">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#115b2a] animate-pulse"></span>
+            Carregando detalhes...
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="h-6 w-52 bg-gray-200 rounded"></div>
+            <div className="h-8 w-40 bg-gray-200 rounded"></div>
+          </div>
+          <div className="h-[300px] bg-gray-100 rounded mb-4"></div>
+          <div className="h-20 bg-gray-100 rounded"></div>
+        </div>
+      )}
 
       {/* Modal de Recursos */}
       {showRecursosModal && (

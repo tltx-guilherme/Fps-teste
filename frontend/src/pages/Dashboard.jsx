@@ -113,10 +113,69 @@ function getHealthLabel(saude) {
   return labels[saude] || saude;
 }
 
+function SearchResultsSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="h-8 w-48 bg-gray-200 rounded mb-3"></div>
+        <div className="h-5 w-64 bg-gray-100 rounded"></div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="h-10 bg-gray-100 rounded-lg"></div>
+          <div className="h-10 bg-gray-100 rounded-lg"></div>
+          <div className="h-10 bg-gray-100 rounded-lg"></div>
+          <div className="h-10 bg-gray-100 rounded-lg"></div>
+          <div className="h-10 bg-gray-100 rounded-lg"></div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="h-12 bg-gray-100 border-b border-gray-200"></div>
+        <div className="p-4 space-y-3">
+          <div className="h-14 bg-gray-100 rounded-lg"></div>
+          <div className="h-14 bg-gray-100 rounded-lg"></div>
+          <div className="h-14 bg-gray-100 rounded-lg"></div>
+          <div className="h-14 bg-gray-100 rounded-lg"></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DASHBOARD_CACHE_KEY = "fps_dashboard_search_cache_v1";
+const DASHBOARD_TAB_KEY = "fps_dashboard_active_tab_v1";
+
+function readDashboardSearchCache() {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.savedAt || !parsed?.ra || !parsed?.data) return null;
+
+    // Mantém cache por até 6 horas para navegação fluida entre páginas
+    if ((Date.now() - Number(parsed.savedAt)) > 6 * 60 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readDashboardTabCache() {
+  try {
+    const tab = sessionStorage.getItem(DASHBOARD_TAB_KEY);
+    return tab === "stats" || tab === "search" ? tab : "search";
+  } catch {
+    return "search";
+  }
+}
+
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState("search"); // 'search' ou 'stats'
-  const [ra, setRa] = useState("");
-  const [data, setData] = useState(null);
+  const initialSearchCache = readDashboardSearchCache();
+  const [activeTab, setActiveTab] = useState(readDashboardTabCache); // 'search' ou 'stats'
+  const [ra, setRa] = useState(() => initialSearchCache?.ra || "");
+  const [data, setData] = useState(() => initialSearchCache?.data || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
@@ -130,19 +189,42 @@ export default function Dashboard() {
     setUserIsAdmin(isAdmin());
   }, []);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DASHBOARD_TAB_KEY, activeTab);
+    } catch {
+      // noop
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      if (!data || !ra) return;
+      sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
+        ra,
+        data,
+        savedAt: Date.now()
+      }));
+    } catch {
+      // noop
+    }
+  }, [data, ra]);
+
   async function handleSearch() {
-    if (!ra.trim()) {
+    const normalizedRa = ra.trim();
+    if (!normalizedRa) {
       setError("Digite o RA do aluno");
       return;
     }
+
+    setRa(normalizedRa);
     setError("");
     setLoading(true);
-    setData(null);
     setSelectedCategory("Todos");
     setSelectedHealth("Todos");
 
     try {
-      const result = await apiGet(`analytics/search/${ra}`);
+      const result = await apiGet(`analytics/search/${encodeURIComponent(normalizedRa)}`);
       setData(result);
       
       if (result.totalEventos === 0) {
@@ -196,6 +278,8 @@ export default function Dashboard() {
 
   // Categorias disponíveis
   const categories = data?.categorias ? Object.keys(data.categorias).sort() : [];
+  const hasSearchResult = Boolean(data);
+  const hasEvents = (data?.totalEventos || 0) > 0;
 
   return (
     <div className="min-h-screen bg-white relative overflow-hidden">
@@ -319,11 +403,11 @@ export default function Dashboard() {
 
       {/* Container principal */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
-        {/* Renderiza aba ativa */}
-        {activeTab === "stats" ? (
-          <Stats />
-        ) : (
-          <>
+        <div className={activeTab === "stats" ? "block" : "hidden"}>
+          <Stats isActive={activeTab === "stats"} />
+        </div>
+
+        <div className={activeTab === "search" ? "block" : "hidden"}>
         {/* Busca minimalista */}
         <div className="mb-8">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -351,117 +435,120 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-
+        
         {/* Resultados */}
-        {data && data.totalEventos > 0 && (
-          <>
-            {/* Informações do aluno */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-3xl font-extrabold text-[#115b2a] mb-2 tracking-tight drop-shadow-sm">RA: {ra}</h2>
-                  {data.ultimoAcesso && (
-                    <p className="text-base text-gray-500 font-medium">
-                      Último acesso: {new Date(data.ultimoAcesso).toLocaleString("pt-BR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit"
-                      })}
-                    </p>
-                  )}
+        <div className="relative">
+          {loading && !hasSearchResult && <SearchResultsSkeleton />}
+
+          {hasEvents && (
+            <>
+              {/* Informações do aluno */}
+              <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-3xl font-extrabold text-[#115b2a] mb-2 tracking-tight drop-shadow-sm">RA: {ra}</h2>
+                    {data.ultimoAcesso && (
+                      <p className="text-base text-gray-500 font-medium">
+                        Último acesso: {new Date(data.ultimoAcesso).toLocaleString("pt-BR", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  {/* Estatísticas inline */}
+                  <div className="flex gap-6 text-base">
+                    <div className="flex flex-col items-center">
+                      <div className="text-3xl font-extrabold text-gray-900 drop-shadow-sm">{data.totalEventos}</div>
+                      <div className="text-gray-500 font-semibold">Total</div>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="text-3xl font-extrabold text-[#115b2a] drop-shadow-sm">{data.estatisticas.normal}</div>
+                      <div className="text-gray-500 font-semibold">Normal</div>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="text-3xl font-extrabold text-amber-600 drop-shadow-sm">{data.estatisticas.slow}</div>
+                      <div className="text-gray-500 font-semibold">Lento</div>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="text-3xl font-extrabold text-red-600 drop-shadow-sm">{data.estatisticas.error}</div>
+                      <div className="text-gray-500 font-semibold">Erro</div>
+                    </div>
+                  </div>
                 </div>
-                {/* Estatísticas inline */}
-                <div className="flex gap-6 text-base">
-                  <div className="flex flex-col items-center">
-                    <div className="text-3xl font-extrabold text-gray-900 drop-shadow-sm">{data.totalEventos}</div>
-                    <div className="text-gray-500 font-semibold">Total</div>
+              </div>
+
+              {/* Filtros minimalistas */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+                <div className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex flex-row flex-wrap gap-2 sm:gap-4 items-center flex-1">
+                    <CustomDropdown
+                      value={selectedCategory}
+                      onChange={setSelectedCategory}
+                      placeholder="Todas categorias"
+                      options={[
+                        { value: 'Todos', label: `Todas categorias (${data.totalEventos})` },
+                        ...categories.map(cat => ({
+                          value: cat,
+                          label: `${cat} (${data.categorias[cat]})`
+                        }))
+                      ]}
+                    />
+
+                    <CustomDropdown
+                      value={selectedHealth}
+                      onChange={setSelectedHealth}
+                      placeholder="Todos status"
+                      options={[
+                        { value: 'Todos', label: 'Todos status' },
+                        { value: 'NORMAL', label: `Normal (${data.estatisticas.normal})` },
+                        { value: 'SLOW', label: `Lento (${data.estatisticas.slow})` },
+                        { value: 'ERROR', label: `Erro (${data.estatisticas.error})` }
+                      ]}
+                    />
+
+                    <CustomDropdown
+                      value={timePeriod}
+                      onChange={setTimePeriod}
+                      placeholder="Todos os períodos"
+                      options={[
+                        { value: 'all', label: 'Todos os períodos' },
+                        { value: '24h', label: 'Últimas 24h' },
+                        { value: '7d', label: 'Últimos 7 dias' },
+                        { value: '30d', label: 'Últimos 30 dias' },
+                        { value: '90d', label: 'Últimos 90 dias' },
+                        { value: '180d', label: 'Últimos 6 meses' },
+                        { value: '365d', label: 'Último ano' }
+                      ]}
+                    />
+
+                    {/* Botão de ordenação com mesmo estilo dos dropdowns */}
+                    <div className="w-full sm:w-auto flex items-center">
+                      <button
+                        type="button"
+                        className="w-full sm:w-auto px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-semibold border-2 border-[#115b2a] transition-all duration-150 flex items-center justify-center gap-2 text-sm sm:text-base shadow-sm hover:shadow-md active:scale-95 bg-white text-[#115b2a] hover:bg-gray-50"
+                        onClick={() => setOrder(order === 'desc' ? 'asc' : 'desc')}
+                        title={order === 'desc' ? 'Mostrar mais antigos' : 'Mostrar recentes'}
+                        style={{ minWidth: 0 }}
+                      >
+                        <span className="truncate">{order === 'desc' ? 'Recentes' : 'Mais antigos'}</span>
+                        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {order === 'desc'
+                            ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />}
+                        </svg>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex flex-col items-center">
-                    <div className="text-3xl font-extrabold text-[#115b2a] drop-shadow-sm">{data.estatisticas.normal}</div>
-                    <div className="text-gray-500 font-semibold">Normal</div>
-                  </div>
-                  <div className="flex flex-col items-center">
-                    <div className="text-3xl font-extrabold text-amber-600 drop-shadow-sm">{data.estatisticas.slow}</div>
-                    <div className="text-gray-500 font-semibold">Lento</div>
-                  </div>
-                  <div className="flex flex-col items-center">
-                    <div className="text-3xl font-extrabold text-red-600 drop-shadow-sm">{data.estatisticas.error}</div>
-                    <div className="text-gray-500 font-semibold">Erro</div>
+                  {/* Registros: embaixo no mobile, ao lado do botão em desktop */}
+                  <div className="text-sm text-gray-500 w-full sm:w-auto mt-2 sm:mt-0 font-semibold">
+                    {filteredEvents.length} de {data.totalEventos} registros
                   </div>
                 </div>
               </div>
-            </div>
-
-            {/* Filtros minimalistas */}
-            <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-              <div className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div className="flex flex-row flex-wrap gap-2 sm:gap-4 items-center flex-1">
-                  <CustomDropdown
-                    value={selectedCategory}
-                    onChange={setSelectedCategory}
-                    placeholder="Todas categorias"
-                    options={[
-                      { value: 'Todos', label: `Todas categorias (${data.totalEventos})` },
-                      ...categories.map(cat => ({
-                        value: cat,
-                        label: `${cat} (${data.categorias[cat]})`
-                      }))
-                    ]}
-                  />
-
-                  <CustomDropdown
-                    value={selectedHealth}
-                    onChange={setSelectedHealth}
-                    placeholder="Todos status"
-                    options={[
-                      { value: 'Todos', label: 'Todos status' },
-                      { value: 'NORMAL', label: `Normal (${data.estatisticas.normal})` },
-                      { value: 'SLOW', label: `Lento (${data.estatisticas.slow})` },
-                      { value: 'ERROR', label: `Erro (${data.estatisticas.error})` }
-                    ]}
-                  />
-
-                  <CustomDropdown
-                    value={timePeriod}
-                    onChange={setTimePeriod}
-                    placeholder="Todos os períodos"
-                    options={[
-                      { value: 'all', label: 'Todos os períodos' },
-                      { value: '24h', label: 'Últimas 24h' },
-                      { value: '7d', label: 'Últimos 7 dias' },
-                      { value: '30d', label: 'Últimos 30 dias' },
-                      { value: '90d', label: 'Últimos 90 dias' },
-                      { value: '180d', label: 'Últimos 6 meses' },
-                      { value: '365d', label: 'Último ano' }
-                    ]}
-                  />
-
-                  {/* Botão de ordenação com mesmo estilo dos dropdowns */}
-                  <div className="w-full sm:w-auto flex items-center">
-                    <button
-                      type="button"
-                      className="w-full sm:w-auto px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-semibold border-2 border-[#115b2a] transition-all duration-150 flex items-center justify-center gap-2 text-sm sm:text-base shadow-sm hover:shadow-md active:scale-95 bg-white text-[#115b2a] hover:bg-gray-50"
-                      onClick={() => setOrder(order === 'desc' ? 'asc' : 'desc')}
-                      title={order === 'desc' ? 'Mostrar mais antigos' : 'Mostrar recentes'}
-                      style={{ minWidth: 0 }}
-                    >
-                      <span className="truncate">{order === 'desc' ? 'Recentes' : 'Mais antigos'}</span>
-                      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        {order === 'desc'
-                          ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />}
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                {/* Registros: embaixo no mobile, ao lado do botão em desktop */}
-                <div className="text-sm text-gray-500 w-full sm:w-auto mt-2 sm:mt-0 font-semibold">
-                  {filteredEvents.length} de {data.totalEventos} registros
-                </div>
-              </div>
-            </div>
 
               {/* Lista de acessos moderna */}
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -522,8 +609,19 @@ export default function Dashboard() {
             </>
           )}
 
-          {/* Estado vazio - quando não tem busca ainda - só mostra na aba de pesquisa */}
-          {activeTab === "search" && !loading && !data && (
+          {hasSearchResult && !hasEvents && !loading && (
+            <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+              <div className="text-gray-400 mb-4">
+                <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">Nenhum acesso encontrado</h3>
+              <p className="text-sm text-gray-500">Tente outro RA ou ajuste o número pesquisado</p>
+            </div>
+          )}
+
+          {!loading && !hasSearchResult && (
             <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
               <div className="text-gray-400 mb-4">
                 <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -534,8 +632,17 @@ export default function Dashboard() {
               <p className="text-sm text-gray-500">O histórico de acessos será exibido aqui</p>
             </div>
           )}
-        </>
-        )}
+
+          {loading && hasSearchResult && (
+            <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] rounded-lg pointer-events-none flex items-start justify-center pt-6">
+              <div className="bg-white border border-[#115b2a]/20 text-[#115b2a] text-sm font-semibold px-4 py-2 rounded-full shadow-sm flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#115b2a] animate-pulse"></span>
+                Atualizando dados...
+              </div>
+            </div>
+          )}
+        </div>
+        </div>
       </main>
 
       {/* Footer */}
